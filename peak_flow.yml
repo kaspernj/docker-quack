@@ -1,5 +1,3 @@
-docker_server_names:
-  - Server 3
 services:
   docker_server:
     image: "docker:29.3.0-dind"
