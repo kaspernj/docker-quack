@@ -1,0 +1,171 @@
+import http from "node:http"
+import {describe, expect, it} from "velocious/build/src/testing/test.js"
+import Docker from "../src/index.js"
+
+function createMockServer(handler) {
+  return new Promise((resolve) => {
+    const server = http.createServer(handler)
+
+    server.listen(0, () => {
+      resolve(server)
+    })
+  })
+}
+
+function captureRequest(req, callback) {
+  let body = ""
+
+  req.on("data", (chunk) => { body += chunk })
+  req.on("end", () => {
+    callback({
+      method: req.method,
+      url: req.url,
+      body,
+      headers: req.headers
+    })
+  })
+}
+
+describe("DockerImages", () => {
+  it("pull() sends POST /images/create with fromImage query param", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({status: "Pull complete"}) + "\n")
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.images.pull({image: "ubuntu:24.04"})
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.url).toEqual("/images/create?fromImage=ubuntu%3A24.04")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("pull() with auth sets X-Registry-Auth header", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({status: "Pull complete"}) + "\n")
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const auth = {username: "user", password: "pass", serveraddress: "https://registry.example.com"}
+
+      await docker.images.pull({image: "private/image:latest", auth})
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.headers["x-registry-auth"]).not.toEqual(undefined)
+
+      const decodedAuth = JSON.parse(Buffer.from(captured.headers["x-registry-auth"], "base64").toString("utf-8"))
+
+      expect(decodedAuth.username).toEqual("user")
+      expect(decodedAuth.password).toEqual("pass")
+      expect(decodedAuth.serveraddress).toEqual("https://registry.example.com")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("inspect() sends GET /images/{name}/json", async () => {
+    let captured = null
+    const imageData = {Id: "sha256:abc123", RepoTags: ["ubuntu:24.04"], Size: 77800000}
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify(imageData))
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const result = await docker.images.inspect({name: "ubuntu:24.04"})
+
+      expect(captured.method).toEqual("GET")
+      expect(captured.url).toEqual("/images/ubuntu:24.04/json")
+      expect(result.Id).toEqual("sha256:abc123")
+      expect(result.Size).toEqual(77800000)
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("remove() sends DELETE /images/{name}", async () => {
+    let captured = null
+    const deleteResult = [{Untagged: "ubuntu:24.04"}, {Deleted: "sha256:abc123"}]
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify(deleteResult))
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const result = await docker.images.remove({name: "ubuntu:24.04"})
+
+      expect(captured.method).toEqual("DELETE")
+      expect(captured.url).toEqual("/images/ubuntu:24.04")
+      expect(result.length).toEqual(2)
+      expect(result[0].Untagged).toEqual("ubuntu:24.04")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("list() sends GET /images/json", async () => {
+    let captured = null
+    const images = [{Id: "sha256:abc", RepoTags: ["ubuntu:24.04"]}, {Id: "sha256:def", RepoTags: ["nginx:latest"]}]
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify(images))
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const result = await docker.images.list()
+
+      expect(captured.method).toEqual("GET")
+      expect(captured.url).toEqual("/images/json")
+      expect(result.length).toEqual(2)
+      expect(result[1].RepoTags[0]).toEqual("nginx:latest")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+})

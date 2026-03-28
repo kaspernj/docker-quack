@@ -1,0 +1,124 @@
+/**
+ * @typedef {object} PullOptions
+ * @property {string} image - Image name with optional tag (e.g. "postgres:16")
+ * @property {{username: string, password: string, serveraddress?: string}} [auth] - Registry authentication
+ */
+
+/** Docker images API. */
+class DockerImages {
+  /**
+   * @param {import("./docker-connection.js").default} connection
+   */
+  constructor(connection) {
+    this.connection = connection
+  }
+
+  /**
+   * Pull an image from a registry. Consumes the entire streaming response before resolving.
+   * When auth is provided, it is sent as a base64-encoded JSON X-Registry-Auth header.
+   * @param {PullOptions} options
+   * @returns {Promise<void>}
+   */
+  async pull(options) {
+    const headers = {}
+
+    if (options.auth) {
+      const authPayload = Buffer.from(JSON.stringify(options.auth)).toString("base64")
+      headers["X-Registry-Auth"] = authPayload
+    }
+
+    // Parse image name and tag for the fromImage query parameter
+    const query = {fromImage: options.image}
+
+    const {stream} = await this.connection.requestStream({
+      method: "POST",
+      path: "/images/create",
+      query,
+      headers
+    })
+
+    // Consume the pull progress stream to completion
+    await this.consumePullStream(stream)
+  }
+
+  /**
+   * Inspect an image.
+   * @param {{name: string}} options
+   * @returns {Promise<object>}
+   */
+  async inspect(options) {
+    return await this.connection.request({
+      method: "GET",
+      path: `/images/${options.name}/json`
+    })
+  }
+
+  /**
+   * Remove an image.
+   * @param {{name: string, force?: boolean}} options
+   * @returns {Promise<object[]>}
+   */
+  async remove(options) {
+    const query = options.force ? {force: true} : undefined
+
+    return await this.connection.request({
+      method: "DELETE",
+      path: `/images/${options.name}`,
+      query
+    })
+  }
+
+  /**
+   * List images.
+   * @param {{filters?: object}} [options]
+   * @returns {Promise<object[]>}
+   */
+  async list(options = {}) {
+    const query = {}
+
+    if (options.filters) query.filters = JSON.stringify(options.filters)
+
+    return await this.connection.request({
+      method: "GET",
+      path: "/images/json",
+      query
+    })
+  }
+
+  /**
+   * Consume the pull progress stream. Docker streams newline-delimited JSON objects
+   * with progress info. If any object contains an error field, throw it.
+   * @param {import("node:http").IncomingMessage} stream
+   * @returns {Promise<void>}
+   */
+  consumePullStream(stream) {
+    return new Promise((resolve, reject) => {
+      const chunks = []
+
+      stream.on("data", (chunk) => chunks.push(chunk))
+      stream.on("error", reject)
+      stream.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf-8")
+        const lines = text.split("\n").filter((line) => line.trim())
+
+        // Check each progress line for errors
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line)
+
+            if (parsed.error) {
+              reject(new Error(`Docker pull error: ${parsed.error}`))
+              return
+            }
+          } catch {
+            // Non-JSON lines are ignored
+          }
+        }
+
+        resolve()
+      })
+    })
+  }
+}
+
+export default DockerImages
