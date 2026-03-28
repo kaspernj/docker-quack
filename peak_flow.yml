@@ -1,0 +1,31 @@
+docker_server_names:
+  - Server 3
+services:
+  docker_server:
+    image: "docker:29.3.0-dind"
+    mem_limit: 4096m
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    entrypoint:
+      - /bin/sh
+      - -lc
+    command: >-
+      rm -rf /var/run/docker/containerd /run/containerd /var/lib/docker/containerd/daemon &&
+      exec dockerd-entrypoint.sh
+      --host=tcp://0.0.0.0:2375
+      --tls=false
+    expose:
+      - 2375
+    privileged: true
+    restart_policy: on-failure
+environment:
+  DOCKER_HOST: "tcp://docker_server:2375"
+before_install:
+  - sudo apt update
+  - sudo apt-get install -y curl nodejs
+script:
+  - node -v
+  - npm install
+  - npm run lint
+  - npm run typecheck
+  - npm run test
