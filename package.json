@@ -1,0 +1,21 @@
+{
+  "name": "docker-quack",
+  "version": "0.0.1",
+  "description": "Docker Engine API client with HTTP keep-alive for Node.js",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "lint": "eslint src spec",
+    "test": "node scripts/velocious-cli.js test spec",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "eslint-plugin-jsdoc": "^50.0.0",
+    "glob": "^10.5.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "typescript": "^5.7.0",
+    "velocious": "^1.0.213"
+  }
+}
