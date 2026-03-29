@@ -60,8 +60,26 @@ const result = await docker.containers.exec({id: Id, Cmd: ["echo", "hello"]})
 console.log(result.stdout) // "hello\n"
 console.log(result.exitCode) // 0
 
+// Execute with streaming output (no buffering)
+await docker.containers.exec({
+  id: Id,
+  Cmd: ["sh", "-c", "echo stdout; echo stderr >&2"],
+  onOutput: ({stream, data}) => {
+    process.stdout.write(`[${stream}] ${data}`)
+  }
+})
+
 // Logs
 const logs = await docker.containers.logs({id: Id})
+
+// Logs with streaming output (no buffering)
+await docker.containers.logs({
+  id: Id,
+  follow: true,
+  onOutput: ({stream, data}) => {
+    process.stdout.write(data)
+  }
+})
 
 // Stats (one-shot)
 const stats = await docker.containers.stats({id: Id})
@@ -93,6 +111,14 @@ await docker.images.pull({image: "alpine:3.21"})
 await docker.images.pull({
   image: "private-registry.example.com/my-image:latest",
   auth: {username: "user", password: "pass", serveraddress: "https://private-registry.example.com"}
+})
+
+// Pull with streaming progress
+await docker.images.pull({
+  image: "postgres:16",
+  onProgress: (progress) => {
+    console.log(`${progress.status} ${progress.id || ""}`)
+  }
 })
 
 // Inspect
