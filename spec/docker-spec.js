@@ -44,6 +44,17 @@ describe("Docker", () => {
     }
   })
 
+  it("Docker.open() accepts a Unix socket path", () => {
+    const docker = Docker.open({host: "127.0.0.1", port: 2375, socketPath: "/var/run/docker.sock"})
+
+    try {
+      expect(docker).toBeInstanceOf(Docker)
+      expect(docker.connection.socketPath).toEqual("/var/run/docker.sock")
+    } finally {
+      docker.close()
+    }
+  })
+
   it("version() sends GET /version", async () => {
     let captured = null
     const versionData = {Version: "27.0.0", ApiVersion: "1.46", Os: "linux", Arch: "amd64"}

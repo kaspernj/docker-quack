@@ -12,6 +12,7 @@ import * as https from "node:https"
  * @typedef {object} ConnectionOptions
  * @property {string} host - Docker host
  * @property {number} port - Docker port
+ * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {TlsOptions} [tls] - TLS options for HTTPS connections
  */
 
@@ -32,6 +33,7 @@ class DockerConnection {
   constructor(options) {
     this.host = options.host
     this.port = options.port
+    this.socketPath = options.socketPath
     this.useTls = !!options.tls
 
     if (this.useTls) {
@@ -118,12 +120,17 @@ class DockerConnection {
       }
 
       const requestOptions = {
-        hostname: this.host,
-        port: this.port,
         path: fullPath,
         method: options.method,
         agent: this.agent,
         headers
+      }
+
+      if (this.socketPath) {
+        requestOptions.socketPath = this.socketPath
+      } else {
+        requestOptions.hostname = this.host
+        requestOptions.port = this.port
       }
 
       const req = this.httpModule.request(requestOptions, (res) => {
@@ -197,12 +204,17 @@ class DockerConnection {
       }
 
       const requestOptions = {
-        hostname: this.host,
-        port: this.port,
         path: fullPath,
         method: options.method,
         agent: this.agent,
         headers
+      }
+
+      if (this.socketPath) {
+        requestOptions.socketPath = this.socketPath
+      } else {
+        requestOptions.hostname = this.host
+        requestOptions.port = this.port
       }
 
       const req = this.httpModule.request(requestOptions, (res) => {
