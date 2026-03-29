@@ -2,6 +2,8 @@ services:
   docker_server:
     image: "docker:29.3.0-dind"
     mem_limit: 4096m
+    extra_hosts:
+      - registry-cache:host-gateway
     environment:
       DOCKER_TLS_CERTDIR: ""
     entrypoint:
@@ -12,6 +14,8 @@ services:
       exec dockerd-entrypoint.sh
       --host=tcp://0.0.0.0:2375
       --tls=false
+      --registry-mirror=http://registry-cache:5000
+      --insecure-registry=registry-cache:5000
     expose:
       - 2375
     privileged: true
@@ -27,3 +31,5 @@ script:
   - npm run lint
   - npm run typecheck
   - npm run test
+  - wait-for-it -t 120 docker_server:2375
+  - npm run test:integration

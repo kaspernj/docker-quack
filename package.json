@@ -6,8 +6,10 @@
   "main": "src/index.js",
   "scripts": {
     "lint": "eslint src spec",
-    "test": "node scripts/velocious-cli.js test spec",
-    "typecheck": "tsc --noEmit"
+    "test": "velocious test spec --ignore spec/integration",
+    "test:integration": "velocious test spec/integration",
+    "typecheck": "tsc --noEmit",
+    "release:patch": "node scripts/release-patch.js"
   },
   "devDependencies": {
     "eslint": "^9.0.0",

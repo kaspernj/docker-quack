@@ -1,0 +1,5 @@
+- Add integration test suite (`spec/integration/`) that runs against a real Docker Engine API server covering containers, images, networks, and volumes lifecycle operations including exec, logs, stats, and commit.
+- Configure registry cache mirror on the CI `docker_server` service via `--registry-mirror` and `--insecure-registry` flags with `extra_hosts: registry-cache:host-gateway`.
+- Add `test:integration` npm script and run it in CI after waiting for the Docker server.
+- Remove obsolete `scripts/velocious-cli.js` Node 20 compatibility shim and call `velocious` CLI directly.
+- Add `release:patch` npm script for automated patch version releases.
