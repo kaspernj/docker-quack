@@ -2,6 +2,7 @@
  * @typedef {object} PullOptions
  * @property {string} image - Image name with optional tag (e.g. "postgres:16")
  * @property {{username: string, password: string, serveraddress?: string}} [auth] - Registry authentication
+ * @property {(progress: object) => void} [onProgress] - Called with each progress object as it arrives
  */
 
 /** Docker images API. */
@@ -38,7 +39,7 @@ class DockerImages {
     })
 
     // Consume the pull progress stream to completion
-    await this.consumePullStream(stream)
+    await this.consumePullStream(stream, options.onProgress)
   }
 
   /**
@@ -88,21 +89,28 @@ class DockerImages {
   /**
    * Consume the pull progress stream. Docker streams newline-delimited JSON objects
    * with progress info. If any object contains an error field, throw it.
+   * When onProgress is provided, each parsed JSON object is forwarded live.
    * @param {import("node:http").IncomingMessage} stream
+   * @param {(progress: object) => void} [onProgress] - Called with each progress object as it arrives
    * @returns {Promise<void>}
    */
-  consumePullStream(stream) {
+  consumePullStream(stream, onProgress) {
     return new Promise((resolve, reject) => {
-      const chunks = []
+      let buffer = ""
 
-      stream.on("data", (chunk) => chunks.push(chunk))
-      stream.on("error", reject)
-      stream.on("end", () => {
-        const text = Buffer.concat(chunks).toString("utf-8")
-        const lines = text.split("\n").filter((line) => line.trim())
+      stream.on("data", (chunk) => {
+        buffer += chunk.toString("utf-8")
 
-        // Check each progress line for errors
-        for (const line of lines) {
+        // Parse complete newline-delimited JSON lines
+        let newlineIndex
+
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim()
+
+          buffer = buffer.slice(newlineIndex + 1)
+
+          if (!line) continue
+
           try {
             const parsed = JSON.parse(line)
 
@@ -110,6 +118,28 @@ class DockerImages {
               reject(new Error(`Docker pull error: ${parsed.error}`))
               return
             }
+
+            if (onProgress) onProgress(parsed)
+          } catch {
+            // Non-JSON lines are ignored
+          }
+        }
+      })
+      stream.on("error", reject)
+      stream.on("end", () => {
+        // Parse any remaining buffered content
+        const remaining = buffer.trim()
+
+        if (remaining) {
+          try {
+            const parsed = JSON.parse(remaining)
+
+            if (parsed.error) {
+              reject(new Error(`Docker pull error: ${parsed.error}`))
+              return
+            }
+
+            if (onProgress) onProgress(parsed)
           } catch {
             // Non-JSON lines are ignored
           }

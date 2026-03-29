@@ -168,4 +168,40 @@ describe("DockerImages", () => {
       server.close()
     }
   })
+
+  it("pull() with onProgress streams progress objects", async () => {
+    const progress1 = {status: "Pulling fs layer", id: "abc123"}
+    const progress2 = {status: "Downloading", progressDetail: {current: 1024, total: 4096}, id: "abc123"}
+    const progress3 = {status: "Pull complete", id: "abc123"}
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, () => {
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.write(JSON.stringify(progress1) + "\n")
+        res.write(JSON.stringify(progress2) + "\n")
+        res.write(JSON.stringify(progress3) + "\n")
+        res.end()
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const received = []
+
+      await docker.images.pull({
+        image: "alpine:3.21",
+        onProgress: (progress) => received.push(progress)
+      })
+
+      expect(received.length).toEqual(3)
+      expect(received[0].status).toEqual("Pulling fs layer")
+      expect(received[1].progressDetail.current).toEqual(1024)
+      expect(received[2].status).toEqual("Pull complete")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
 })

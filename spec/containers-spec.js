@@ -262,4 +262,117 @@ describe("DockerContainers", () => {
       server.close()
     }
   })
+
+  it("exec() with onOutput streams frames without buffering", async () => {
+    // Build a multiplexed exec response: stdout frame "hello\n", stderr frame "warn\n"
+    const stdoutPayload = Buffer.from("hello\n")
+    const stderrPayload = Buffer.from("warn\n")
+    const frame1 = Buffer.alloc(8 + stdoutPayload.length)
+
+    frame1.writeUInt8(1, 0)
+    frame1.writeUInt32BE(stdoutPayload.length, 4)
+    stdoutPayload.copy(frame1, 8)
+
+    const frame2 = Buffer.alloc(8 + stderrPayload.length)
+
+    frame2.writeUInt8(2, 0)
+    frame2.writeUInt32BE(stderrPayload.length, 4)
+    stderrPayload.copy(frame2, 8)
+
+    const execId = "exec-stream-123"
+    let requestCount = 0
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, () => {
+        requestCount++
+
+        if (requestCount === 1) {
+          // exec create
+          jsonResponse(res, 201, {Id: execId})
+        } else if (requestCount === 2) {
+          // exec start - send multiplexed stream
+          res.writeHead(200, {"Content-Type": "application/vnd.docker.raw-stream"})
+          res.write(frame1)
+          res.write(frame2)
+          res.end()
+        } else {
+          // exec inspect
+          jsonResponse(res, 200, {ExitCode: 0})
+        }
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const chunks = []
+      const result = await docker.containers.exec({
+        id: "abc123",
+        Cmd: ["echo", "hello"],
+        onOutput: (output) => chunks.push(output)
+      })
+
+      expect(chunks.length).toEqual(2)
+      expect(chunks[0].stream).toEqual("stdout")
+      expect(chunks[0].data).toEqual("hello\n")
+      expect(chunks[1].stream).toEqual("stderr")
+      expect(chunks[1].data).toEqual("warn\n")
+
+      // When onOutput is provided, stdout/stderr are not accumulated
+      expect(result.stdout).toEqual("")
+      expect(result.stderr).toEqual("")
+      expect(result.exitCode).toEqual(0)
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("logs() with onOutput streams frames without buffering", async () => {
+    // Build multiplexed log frames
+    const payload1 = Buffer.from("line1\n")
+    const payload2 = Buffer.from("line2\n")
+    const frame1 = Buffer.alloc(8 + payload1.length)
+
+    frame1.writeUInt8(1, 0)
+    frame1.writeUInt32BE(payload1.length, 4)
+    payload1.copy(frame1, 8)
+
+    const frame2 = Buffer.alloc(8 + payload2.length)
+
+    frame2.writeUInt8(1, 0)
+    frame2.writeUInt32BE(payload2.length, 4)
+    payload2.copy(frame2, 8)
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, () => {
+        res.writeHead(200, {"Content-Type": "application/vnd.docker.raw-stream"})
+        res.write(frame1)
+        res.write(frame2)
+        res.end()
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const chunks = []
+      const result = await docker.containers.logs({
+        id: "abc123",
+        onOutput: (output) => chunks.push(output)
+      })
+
+      expect(chunks.length).toEqual(2)
+      expect(chunks[0].data).toEqual("line1\n")
+      expect(chunks[1].data).toEqual("line2\n")
+
+      // When onOutput is provided, result is empty
+      expect(result).toEqual("")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
 })

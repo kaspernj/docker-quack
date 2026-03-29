@@ -18,6 +18,7 @@
  * @property {string} [WorkingDir] - Working directory for the exec
  * @property {string[]} [Env] - Environment variables
  * @property {string} [User] - User to run the command as
+ * @property {(output: {stream: "stdout" | "stderr", data: string}) => void} [onOutput] - Called with each chunk as it arrives
  */
 
 /**
@@ -109,7 +110,7 @@ class DockerContainers {
 
   /**
    * Fetch container logs. Parses the multiplexed stream header when tty is not used.
-   * @param {{id: string, stdout?: boolean, stderr?: boolean, follow?: boolean, tail?: string | number}} options
+   * @param {{id: string, stdout?: boolean, stderr?: boolean, follow?: boolean, tail?: string | number, onOutput?: (output: {stream: "stdout" | "stderr", data: string}) => void}} options
    * @returns {Promise<string>}
    */
   async logs(options) {
@@ -127,7 +128,7 @@ class DockerContainers {
       query
     })
 
-    return await this.consumeLogStream(stream)
+    return await this.consumeLogStream(stream, options.onOutput)
   }
 
   /**
@@ -163,7 +164,7 @@ class DockerContainers {
       body: {Detach: false, Tty: false}
     })
 
-    const {stdout, stderr} = await this.demuxStream(stream)
+    const {stdout, stderr} = await this.demuxStream(stream, options.onOutput)
 
     // Step 3: Inspect exec to get exit code
     const execInspect = await this.connection.request({
@@ -261,32 +262,34 @@ class DockerContainers {
    * Consume a Docker log stream, stripping the 8-byte multiplexed frame headers.
    * Each frame: [stream_type(1 byte), 0, 0, 0, size(4 bytes big-endian), payload(size bytes)].
    * @param {import("node:http").IncomingMessage} stream
+   * @param {((output: {stream: "stdout" | "stderr", data: string}) => void)} [onOutput] - Called with each frame as it arrives
    * @returns {Promise<string>}
    */
-  consumeLogStream(stream) {
+  consumeLogStream(stream, onOutput) {
     return new Promise((resolve, reject) => {
-      const chunks = []
+      const output = onOutput ? null : []
+      /** @type {Buffer} */
+      let pending = Buffer.from([])
 
-      stream.on("data", (chunk) => chunks.push(chunk))
+      stream.on("data", (chunk) => {
+        pending = /** @type {Buffer} */ (Buffer.concat([pending, chunk]))
+        pending = this.drainLogFrames(pending, output, onOutput)
+      })
       stream.on("error", reject)
       stream.on("end", () => {
-        const buffer = Buffer.concat(chunks)
-        const output = []
-        let offset = 0
+        if (onOutput) {
+          // TTY mode fallback: if there are leftover bytes with no parsed frames, emit them
+          if (pending.length > 0) {
+            onOutput({stream: "stdout", data: pending.toString("utf-8")})
+          }
 
-        // Parse multiplexed frames
-        while (offset + 8 <= buffer.length) {
-          const size = buffer.readUInt32BE(offset + 4)
-
-          if (offset + 8 + size > buffer.length) break
-
-          output.push(buffer.subarray(offset + 8, offset + 8 + size).toString("utf-8"))
-          offset += 8 + size
+          resolve("")
+          return
         }
 
         // If no frames were parsed, return raw content (TTY mode has no headers)
-        if (output.length === 0 && buffer.length > 0) {
-          resolve(buffer.toString("utf-8"))
+        if (output.length === 0 && pending.length > 0) {
+          resolve(pending.toString("utf-8"))
           return
         }
 
@@ -296,44 +299,81 @@ class DockerContainers {
   }
 
   /**
+   * Parse complete multiplexed frames from a buffer, returning any leftover bytes.
+   * @param {Buffer} buffer
+   * @param {string[] | null} output - Accumulator for full output, null when streaming via callback
+   * @param {((output: {stream: "stdout" | "stderr", data: string}) => void)} [onOutput]
+   * @returns {Buffer} Remaining unparsed bytes
+   */
+  drainLogFrames(buffer, output, onOutput) {
+    let offset = 0
+
+    while (offset + 8 <= buffer.length) {
+      const size = buffer.readUInt32BE(offset + 4)
+
+      if (offset + 8 + size > buffer.length) break
+
+      const streamType = buffer.readUInt8(offset)
+      const data = buffer.subarray(offset + 8, offset + 8 + size).toString("utf-8")
+      const streamName = streamType === 2 ? "stderr" : "stdout"
+
+      if (output) output.push(data)
+      if (onOutput) onOutput({stream: streamName, data})
+
+      offset += 8 + size
+    }
+
+    return /** @type {Buffer} */ (buffer.subarray(offset))
+  }
+
+  /**
    * Demultiplex a Docker exec stream into separate stdout and stderr buffers.
+   * When onOutput is provided, frames are forwarded live and not accumulated in memory.
    * Frame format: [stream_type(1 byte), 0, 0, 0, size(4 bytes big-endian), payload].
    * Stream type 1 = stdout, 2 = stderr.
    * @param {import("node:http").IncomingMessage} stream
+   * @param {((output: {stream: "stdout" | "stderr", data: string}) => void)} [onOutput] - Called with each frame as it arrives
    * @returns {Promise<{stdout: string, stderr: string}>}
    */
-  demuxStream(stream) {
+  demuxStream(stream, onOutput) {
     return new Promise((resolve, reject) => {
-      const chunks = []
+      const stdoutParts = onOutput ? null : []
+      const stderrParts = onOutput ? null : []
+      /** @type {Buffer} */
+      let pending = Buffer.from([])
 
-      stream.on("data", (chunk) => chunks.push(chunk))
-      stream.on("error", reject)
-      stream.on("end", () => {
-        const buffer = Buffer.concat(chunks)
-        const stdoutParts = []
-        const stderrParts = []
+      stream.on("data", (chunk) => {
+        pending = /** @type {Buffer} */ (Buffer.concat([pending, chunk]))
+
         let offset = 0
 
-        while (offset + 8 <= buffer.length) {
-          const streamType = buffer.readUInt8(offset)
-          const size = buffer.readUInt32BE(offset + 4)
+        while (offset + 8 <= pending.length) {
+          const streamType = pending.readUInt8(offset)
+          const size = pending.readUInt32BE(offset + 4)
 
-          if (offset + 8 + size > buffer.length) break
+          if (offset + 8 + size > pending.length) break
 
-          const payload = buffer.subarray(offset + 8, offset + 8 + size).toString("utf-8")
+          const data = pending.subarray(offset + 8, offset + 8 + size).toString("utf-8")
+          const streamName = streamType === 2 ? "stderr" : "stdout"
 
-          if (streamType === 1) {
-            stdoutParts.push(payload)
+          if (onOutput) {
+            onOutput({stream: streamName, data})
+          } else if (streamType === 1) {
+            stdoutParts.push(data)
           } else if (streamType === 2) {
-            stderrParts.push(payload)
+            stderrParts.push(data)
           }
 
           offset += 8 + size
         }
 
+        pending = /** @type {Buffer} */ (pending.subarray(offset))
+      })
+      stream.on("error", reject)
+      stream.on("end", () => {
         resolve({
-          stdout: stdoutParts.join(""),
-          stderr: stderrParts.join("")
+          stdout: stdoutParts ? stdoutParts.join("") : "",
+          stderr: stderrParts ? stderrParts.join("") : ""
         })
       })
     })
