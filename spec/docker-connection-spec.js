@@ -18,6 +18,19 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("creates a Unix-socket connection with keep-alive", () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375, socketPath: "/var/run/docker.sock"})
+
+    try {
+      expect(connection.socketPath).toEqual("/var/run/docker.sock")
+      expect(connection.useTls).toEqual(false)
+      expect(connection.agent).toBeInstanceOf(http.Agent)
+      expect(connection.agent.keepAlive).toEqual(true)
+    } finally {
+      connection.close()
+    }
+  })
+
   it("creates an HTTPS connection with TLS options", () => {
     const tlsOptions = {
       ca: "fake-ca-cert",

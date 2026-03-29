@@ -8,6 +8,7 @@ import DockerVolumes from "./volumes.js"
  * @typedef {object} DockerOpenOptions
  * @property {string} host - Docker host
  * @property {number} port - Docker port
+ * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {import("./docker-connection.js").TlsOptions} [tls] - TLS options for HTTPS connections
  */
 
