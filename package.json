@@ -1,6 +1,6 @@
 {
   "name": "docker-quack",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Docker Engine API client with HTTP keep-alive for Node.js",
   "type": "module",
   "main": "src/index.js",
@@ -16,7 +16,7 @@
     "eslint-plugin-jsdoc": "^50.0.0",
     "glob": "^13.0.6",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
+    "sqlite3": "^6.0.1",
     "typescript": "^6.0.3",
     "velocious": "^1.0.343"
   }
