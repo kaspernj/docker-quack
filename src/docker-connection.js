@@ -6,6 +6,13 @@ import * as https from "node:https"
  * @property {string | Buffer} ca - CA certificate
  * @property {string | Buffer} cert - Client certificate
  * @property {string | Buffer} key - Client key
+ * @property {boolean} [rejectUnauthorized] - When false, accept the daemon's
+ *   server certificate without verifying its CA chain or `serverAuth` purpose.
+ *   Mirrors `tls.connect`'s option of the same name. Defaults to true. Set to
+ *   false when talking to a Docker daemon whose TLS material does not satisfy
+ *   strict server-cert checks (for example, daemons that present the CA cert
+ *   itself as the server cert) but is still trusted because it lives behind
+ *   client-certificate auth.
  */
 
 /**
@@ -41,7 +48,8 @@ class DockerConnection {
         keepAlive: true,
         ca: options.tls.ca,
         cert: options.tls.cert,
-        key: options.tls.key
+        key: options.tls.key,
+        ...(options.tls.rejectUnauthorized !== undefined ? {rejectUnauthorized: options.tls.rejectUnauthorized} : {})
       })
     } else {
       this.agent = new http.Agent({keepAlive: true})

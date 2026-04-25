@@ -44,6 +44,46 @@ describe("DockerConnection", () => {
       expect(connection.agent.keepAlive).toEqual(true)
       expect(connection.agent.constructor.name).toEqual("Agent")
       expect(connection.httpModule.request).toEqual(https.request)
+      expect(connection.agent.options.rejectUnauthorized).toEqual(undefined)
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("forwards rejectUnauthorized=false to the https.Agent so untrusted server certs are accepted", () => {
+    const connection = new DockerConnection({
+      host: "127.0.0.1",
+      port: 2376,
+      tls: {
+        ca: "fake-ca-cert",
+        cert: "fake-client-cert",
+        key: "fake-client-key",
+        rejectUnauthorized: false
+      }
+    })
+
+    try {
+      expect(connection.useTls).toEqual(true)
+      expect(connection.agent.options.rejectUnauthorized).toEqual(false)
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("forwards rejectUnauthorized=true to the https.Agent when explicitly requested", () => {
+    const connection = new DockerConnection({
+      host: "127.0.0.1",
+      port: 2376,
+      tls: {
+        ca: "fake-ca-cert",
+        cert: "fake-client-cert",
+        key: "fake-client-key",
+        rejectUnauthorized: true
+      }
+    })
+
+    try {
+      expect(connection.agent.options.rejectUnauthorized).toEqual(true)
     } finally {
       connection.close()
     }
