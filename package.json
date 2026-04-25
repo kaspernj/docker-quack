@@ -17,7 +17,7 @@
     "glob": "^13.0.6",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
-    "typescript": "^5.7.0",
+    "typescript": "^6.0.3",
     "velocious": "^1.0.343"
   }
 }
