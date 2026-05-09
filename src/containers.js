@@ -19,6 +19,7 @@
  * @property {string[]} [Env] - Environment variables
  * @property {string} [User] - User to run the command as
  * @property {(output: {stream: "stdout" | "stderr", data: string}) => void} [onOutput] - Called with each chunk as it arrives
+ * @property {AbortSignal} [signal] - Optional signal to abort the exec stream
  */
 
 /**
@@ -110,7 +111,7 @@ class DockerContainers {
 
   /**
    * Fetch container logs. Parses the multiplexed stream header when tty is not used.
-   * @param {{id: string, stdout?: boolean, stderr?: boolean, follow?: boolean, tail?: string | number, onOutput?: (output: {stream: "stdout" | "stderr", data: string}) => void}} options
+   * @param {{id: string, stdout?: boolean, stderr?: boolean, follow?: boolean, since?: number | string, tail?: string | number, signal?: AbortSignal, onOutput?: (output: {stream: "stdout" | "stderr", data: string}) => void}} options
    * @returns {Promise<string>}
    */
   async logs(options) {
@@ -120,12 +121,14 @@ class DockerContainers {
     }
 
     if (options.follow !== undefined) query.follow = options.follow
+    if (options.since !== undefined) query.since = String(options.since)
     if (options.tail !== undefined) query.tail = String(options.tail)
 
     const {stream} = await this.connection.requestStream({
       method: "GET",
       path: `/containers/${options.id}/logs`,
-      query
+      query,
+      signal: options.signal
     })
 
     return await this.consumeLogStream(stream, options.onOutput)
@@ -161,7 +164,8 @@ class DockerContainers {
     const {stream} = await this.connection.requestStream({
       method: "POST",
       path: `/exec/${execId}/start`,
-      body: {Detach: false, Tty: false}
+      body: {Detach: false, Tty: false},
+      signal: options.signal
     })
 
     const {stdout, stderr} = await this.demuxStream(stream, options.onOutput)

@@ -30,6 +30,7 @@ import * as https from "node:https"
  * @property {object} [query] - Query parameters
  * @property {object | Buffer | import("node:stream").Readable} [body] - Request body
  * @property {object} [headers] - Additional headers
+ * @property {AbortSignal} [signal] - Optional abort signal for streaming requests
  */
 
 /** Low-level HTTP/HTTPS client with keep-alive for the Docker Engine API. */
@@ -196,6 +197,12 @@ class DockerConnection {
     return new Promise((resolve, reject) => {
       const fullPath = this.buildPath(options.path, options.query)
       const headers = {...options.headers}
+      let settled = false
+
+      if (options.signal?.aborted) {
+        reject(new Error("Docker request aborted."))
+        return
+      }
 
       let bodyData = null
 
@@ -225,7 +232,23 @@ class DockerConnection {
         requestOptions.port = this.port
       }
 
+      const removeAbortListener = () => {
+        options.signal?.removeEventListener("abort", abortRequest)
+      }
+      const abortRequest = () => {
+        req.destroy(new Error("Docker request aborted."))
+      }
       const req = this.httpModule.request(requestOptions, (res) => {
+        const abortStream = () => {
+          res.destroy(new Error("Docker request aborted."))
+        }
+
+        removeAbortListener()
+        options.signal?.addEventListener("abort", abortStream, {once: true})
+        res.on("close", () => {
+          options.signal?.removeEventListener("abort", abortStream)
+        })
+
         if (res.statusCode >= 400) {
           const chunks = []
 
@@ -241,16 +264,28 @@ class DockerConnection {
               message = buffer.toString("utf-8")
             }
 
-            reject(new Error(`Docker API error ${res.statusCode} ${options.method} ${fullPath}: ${message}`))
+            if (!settled) {
+              settled = true
+              reject(new Error(`Docker API error ${res.statusCode} ${options.method} ${fullPath}: ${message}`))
+            }
           })
 
           return
         }
 
+        settled = true
         resolve({stream: res, statusCode: res.statusCode})
       })
 
-      req.on("error", reject)
+      options.signal?.addEventListener("abort", abortRequest, {once: true})
+      req.on("error", (error) => {
+        removeAbortListener()
+
+        if (!settled) {
+          settled = true
+          reject(error)
+        }
+      })
 
       if (bodyData) {
         req.write(bodyData)
