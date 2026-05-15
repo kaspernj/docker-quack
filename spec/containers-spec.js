@@ -375,4 +375,61 @@ describe("DockerContainers", () => {
       server.close()
     }
   })
+
+  it("logs() sends follow and since while aborting live streams without buffering", async () => {
+    const payload = Buffer.from("live line\n")
+    const frame = Buffer.alloc(8 + payload.length)
+    let capturedUrl = null
+
+    frame.writeUInt8(1, 0)
+    frame.writeUInt32BE(payload.length, 4)
+    payload.copy(frame, 8)
+
+    const server = await createMockServer((req, res) => {
+      capturedUrl = req.url
+      res.writeHead(200, {"Content-Type": "application/vnd.docker.raw-stream"})
+      res.write(frame)
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const abortController = new AbortController()
+      const chunks = []
+      let logsPromise
+      const firstChunk = new Promise((resolve) => {
+        logsPromise = docker.containers.logs({
+          id: "abc123",
+          follow: true,
+          since: 12345,
+          signal: abortController.signal,
+          onOutput: (output) => {
+            chunks.push(output)
+            resolve()
+          }
+        })
+
+        logsPromise.catch(() => {})
+      })
+
+      await firstChunk
+      abortController.abort()
+
+      let thrownError = null
+
+      try {
+        await logsPromise
+      } catch (error) {
+        thrownError = error
+      }
+
+      expect(capturedUrl).toEqual("/containers/abc123/logs?stdout=true&stderr=true&follow=true&since=12345")
+      expect(chunks).toEqual([{stream: "stdout", data: "live line\n"}])
+      expect(thrownError?.message).toContain("aborted")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
 })
