@@ -210,6 +210,37 @@ describe("DockerContainers", () => {
     }
   })
 
+  it("commit() retries transient Docker API failures", async () => {
+    const requests = []
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        requests.push(data)
+
+        if (requests.length === 1) {
+          jsonResponse(res, 500, {message: "failed to export layer: CreateDiff: failed to commit: no such file or directory"})
+        } else {
+          jsonResponse(res, 201, {Id: "sha256:committed-after-retry"})
+        }
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const result = await docker.containers.commit({id: "abc123", repo: "my-repo", tag: "latest"})
+
+      expect(requests.length).toEqual(2)
+      expect(requests[0].url).toEqual("/commit?container=abc123&repo=my-repo&tag=latest")
+      expect(requests[1].url).toEqual("/commit?container=abc123&repo=my-repo&tag=latest")
+      expect(result.Id).toEqual("sha256:committed-after-retry")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
   it("list() sends GET /containers/json", async () => {
     let captured = null
     const containers = [{Id: "abc123", Names: ["/container1"]}, {Id: "def456", Names: ["/container2"]}]
