@@ -41,6 +41,7 @@ import * as https from "node:https"
  */
 
 const RETRYABLE_ERROR_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENOENT", "ETIMEDOUT", "EPIPE"])
+const RETRYABLE_DOCKER_API_STATUS_CODES = new Set([502, 503, 504])
 
 /** Docker Engine API error with status metadata. */
 export class DockerApiError extends Error {
@@ -259,8 +260,8 @@ class DockerConnection {
     }
 
     return {
-      tries: retry.tries || 3,
-      waitMs: retry.waitMs || 500
+      tries: retry.tries ?? 3,
+      waitMs: retry.waitMs ?? 500
     }
   }
 
@@ -278,7 +279,7 @@ class DockerConnection {
    */
   retryableError(error) {
     if (error instanceof DockerApiError) {
-      return error.statusCode >= 500
+      return this.retryableDockerApiError(error)
     }
 
     if (!error || typeof error !== "object") {
@@ -290,6 +291,30 @@ class DockerConnection {
     }
 
     return error instanceof Error && error.message === "socket hang up"
+  }
+
+  /**
+   * @param {DockerApiError} error
+   * @returns {boolean}
+   */
+  retryableDockerApiError(error) {
+    if (RETRYABLE_DOCKER_API_STATUS_CODES.has(error.statusCode)) {
+      return true
+    }
+
+    if (error.statusCode !== 500) {
+      return false
+    }
+
+    const responseMessage = error.responseMessage.toLowerCase()
+
+    return (
+      responseMessage.includes("failed to export layer") ||
+      responseMessage.includes("failed to prepare extraction snapshot") ||
+      (responseMessage.includes("failed to commit") && responseMessage.includes("no such file or directory")) ||
+      (responseMessage.includes("parent snapshot") && responseMessage.includes("does not exist")) ||
+      (responseMessage.includes("io.containerd.content.v1.content/ingest") && responseMessage.includes("no such file or directory"))
+    )
   }
 
   /**
