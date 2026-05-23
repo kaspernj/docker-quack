@@ -31,7 +31,32 @@ import * as https from "node:https"
  * @property {object | Buffer | import("node:stream").Readable} [body] - Request body
  * @property {object} [headers] - Additional headers
  * @property {AbortSignal} [signal] - Optional abort signal for streaming requests
+ * @property {boolean | RetryOptions} [retry] - Retry transient Docker API or connection failures
  */
+
+/**
+ * @typedef {object} RetryOptions
+ * @property {number} [tries] - Maximum attempts. Defaults to 3.
+ * @property {number} [waitMs] - Delay between attempts. Defaults to 500ms.
+ */
+
+const RETRYABLE_ERROR_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENOENT", "ETIMEDOUT", "EPIPE"])
+const RETRYABLE_DOCKER_API_STATUS_CODES = new Set([502, 503, 504])
+
+/** Docker Engine API error with status metadata. */
+export class DockerApiError extends Error {
+  /**
+   * @param {{message: string, method: string, path: string, responseMessage: string, statusCode: number}} options
+   */
+  constructor(options) {
+    super(options.message)
+    this.name = "DockerApiError"
+    this.method = options.method
+    this.path = options.path
+    this.responseMessage = options.responseMessage
+    this.statusCode = options.statusCode
+  }
+}
 
 /** Low-level HTTP/HTTPS client with keep-alive for the Docker Engine API. */
 class DockerConnection {
@@ -106,7 +131,35 @@ class DockerConnection {
    * @param {RequestOptions} options
    * @returns {Promise<Buffer>}
    */
-  requestRaw(options) {
+  async requestRaw(options) {
+    const retryOptions = this.normalizedRetryOptions(options.retry)
+    const shouldRetry = retryOptions && !this.hasStreamingBody(options)
+    const tries = shouldRetry ? retryOptions.tries : 1
+
+    for (let attempt = 1; attempt <= tries; attempt += 1) {
+      try {
+        return await this.requestRawOnce(options)
+      } catch (error) {
+        if (
+          attempt >= tries ||
+          !this.retryableError(error)
+        ) {
+          throw error
+        }
+
+        await this.wait(retryOptions.waitMs)
+      }
+    }
+
+    throw new Error("Docker request retry loop exited unexpectedly.")
+  }
+
+  /**
+   * Perform one HTTP request attempt and return the raw Buffer response.
+   * @param {RequestOptions} options
+   * @returns {Promise<Buffer>}
+   */
+  requestRawOnce(options) {
     return new Promise((resolve, reject) => {
       const fullPath = this.buildPath(options.path, options.query)
       const headers = {...options.headers}
@@ -162,7 +215,13 @@ class DockerConnection {
               message = buffer.toString("utf-8")
             }
 
-            reject(new Error(`Docker API error ${res.statusCode} ${options.method} ${fullPath}: ${message}`))
+            reject(new DockerApiError({
+              message: `Docker API error ${res.statusCode} ${options.method} ${fullPath}: ${message}`,
+              method: options.method,
+              path: fullPath,
+              responseMessage: message,
+              statusCode: res.statusCode
+            }))
             return
           }
 
@@ -185,6 +244,85 @@ class DockerConnection {
         req.end()
       }
     })
+  }
+
+  /**
+   * @param {boolean | RetryOptions | undefined} retry
+   * @returns {{tries: number, waitMs: number} | null}
+   */
+  normalizedRetryOptions(retry) {
+    if (!retry) {
+      return null
+    }
+
+    if (retry === true) {
+      return {tries: 3, waitMs: 500}
+    }
+
+    return {
+      tries: retry.tries ?? 3,
+      waitMs: retry.waitMs ?? 500
+    }
+  }
+
+  /**
+   * @param {RequestOptions} options
+   * @returns {boolean}
+   */
+  hasStreamingBody(options) {
+    return Boolean(options.body && typeof options.body === "object" && typeof options.body.pipe === "function")
+  }
+
+  /**
+   * @param {unknown} error
+   * @returns {boolean}
+   */
+  retryableError(error) {
+    if (error instanceof DockerApiError) {
+      return this.retryableDockerApiError(error)
+    }
+
+    if (!error || typeof error !== "object") {
+      return false
+    }
+
+    if ("code" in error && typeof error.code === "string" && RETRYABLE_ERROR_CODES.has(error.code)) {
+      return true
+    }
+
+    return error instanceof Error && error.message === "socket hang up"
+  }
+
+  /**
+   * @param {DockerApiError} error
+   * @returns {boolean}
+   */
+  retryableDockerApiError(error) {
+    if (RETRYABLE_DOCKER_API_STATUS_CODES.has(error.statusCode)) {
+      return true
+    }
+
+    if (error.statusCode !== 500) {
+      return false
+    }
+
+    const responseMessage = error.responseMessage.toLowerCase()
+
+    return (
+      responseMessage.includes("failed to export layer") ||
+      responseMessage.includes("failed to prepare extraction snapshot") ||
+      (responseMessage.includes("failed to commit") && responseMessage.includes("no such file or directory")) ||
+      (responseMessage.includes("parent snapshot") && responseMessage.includes("does not exist")) ||
+      (responseMessage.includes("io.containerd.content.v1.content/ingest") && responseMessage.includes("no such file or directory"))
+    )
+  }
+
+  /**
+   * @param {number} waitMs
+   * @returns {Promise<void>}
+   */
+  async wait(waitMs) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
   }
 
   /**

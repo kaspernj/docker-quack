@@ -212,6 +212,156 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("retries retryable Docker API errors when retry is enabled", async () => {
+    let attempts = 0
+
+    const server = http.createServer((_req, res) => {
+      attempts += 1
+
+      if (attempts === 1) {
+        res.writeHead(500, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({message: "failed to export layer: CreateDiff: failed to commit: no such file or directory"}))
+      } else {
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({Id: "sha256:retry-success"}))
+      }
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      const result = await connection.request({
+        method: "POST",
+        path: "/commit",
+        retry: {tries: 2, waitMs: 1}
+      })
+
+      expect(attempts).toEqual(2)
+      expect(result.Id).toEqual("sha256:retry-success")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("preserves explicit zero retry options", () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
+
+    try {
+      expect(connection.normalizedRetryOptions({tries: 0, waitMs: 0})).toEqual({tries: 0, waitMs: 0})
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("passes explicit zero retry wait through to the retry delay", async () => {
+    let attempts = 0
+    const retryWaits = []
+
+    const server = http.createServer((_req, res) => {
+      attempts += 1
+
+      if (attempts === 1) {
+        res.writeHead(500, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({message: "failed to export layer: CreateDiff: failed to commit: no such file or directory"}))
+      } else {
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({Id: "sha256:retry-success"}))
+      }
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    connection.wait = async (waitMs) => {
+      retryWaits.push(waitMs)
+    }
+
+    try {
+      const result = await connection.request({
+        method: "POST",
+        path: "/commit",
+        retry: {tries: 2, waitMs: 0}
+      })
+
+      expect(attempts).toEqual(2)
+      expect(retryWaits).toEqual([0])
+      expect(result.Id).toEqual("sha256:retry-success")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("does not retry persistent Docker API 500 errors when retry is enabled", async () => {
+    let attempts = 0
+
+    const server = http.createServer((_req, res) => {
+      attempts += 1
+      res.writeHead(500, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({message: "server error"}))
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      let thrownError = null
+
+      try {
+        await connection.request({
+          method: "POST",
+          path: "/commit",
+          retry: {tries: 2, waitMs: 0}
+        })
+      } catch (error) {
+        thrownError = error
+      }
+
+      expect(attempts).toEqual(1)
+      expect(thrownError).not.toEqual(null)
+      expect(thrownError.message).toMatch(/server error/)
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("does not retry Docker API errors when retry is disabled", async () => {
+    let attempts = 0
+
+    const server = http.createServer((_req, res) => {
+      attempts += 1
+      res.writeHead(500, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({message: "server error"}))
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      let thrownError = null
+
+      try {
+        await connection.request({method: "POST", path: "/commit"})
+      } catch (error) {
+        thrownError = error
+      }
+
+      expect(attempts).toEqual(1)
+      expect(thrownError).not.toEqual(null)
+      expect(thrownError.message).toMatch(/server error/)
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
   it("close() destroys the agent", () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
     let destroyCalled = false

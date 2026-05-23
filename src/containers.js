@@ -199,7 +199,8 @@ class DockerContainers {
     return await this.connection.request({
       method: "POST",
       path: "/commit",
-      query
+      query,
+      retry: true
     })
   }
 
