@@ -1,6 +1,6 @@
 {
   "name": "docker-quack",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Docker Engine API client with HTTP keep-alive for Node.js",
   "type": "module",
   "main": "src/index.js",
