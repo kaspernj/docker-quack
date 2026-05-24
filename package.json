@@ -20,5 +20,8 @@
     "sqlite3": "^6.0.1",
     "typescript": "^6.0.3",
     "velocious": "^1.0.343"
+  },
+  "dependencies": {
+    "snapreq": "^0.0.3"
   }
 }
