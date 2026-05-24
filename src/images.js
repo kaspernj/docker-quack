@@ -90,7 +90,7 @@ class DockerImages {
    * Consume the pull progress stream. Docker streams newline-delimited JSON objects
    * with progress info. If any object contains an error field, throw it.
    * When onProgress is provided, each parsed JSON object is forwarded live.
-   * @param {import("node:http").IncomingMessage} stream
+   * @param {import("node:stream").Readable} stream
    * @param {(progress: object) => void} [onProgress] - Called with each progress object as it arrives
    * @returns {Promise<void>}
    */

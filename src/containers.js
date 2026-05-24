@@ -1,3 +1,6 @@
+import {Readable} from "node:stream"
+import {createGzip} from "node:zlib"
+
 /**
  * @typedef {object} CreateContainerOptions
  * @property {string} [name] - Container name
@@ -9,6 +12,10 @@
  * @property {object} [NetworkingConfig] - Network configuration
  * @property {object} [HostConfig] - Host configuration (binds, port bindings, etc.)
  * @property {object} [ExposedPorts] - Exposed ports
+ */
+
+/**
+ * @typedef {"gzip" | "identity"} ArchiveCompression
  */
 
 /**
@@ -206,7 +213,7 @@ class DockerContainers {
 
   /**
    * Upload a tar archive to a container path.
-   * @param {{id: string, path: string, archive: Buffer | import("node:stream").Readable}} options
+   * @param {{id: string, path: string, archive: Buffer | import("node:stream").Readable, archiveCompression?: ArchiveCompression}} options
    * @returns {Promise<void>}
    */
   async putArchive(options) {
@@ -214,9 +221,42 @@ class DockerContainers {
       method: "PUT",
       path: `/containers/${options.id}/archive`,
       query: {path: options.path},
-      body: options.archive,
+      body: this.archiveBody(options.archive, options.archiveCompression || "gzip"),
       headers: {"Content-Type": "application/x-tar"}
     })
+  }
+
+  /**
+   * @param {Buffer | import("node:stream").Readable} archive
+   * @param {ArchiveCompression} archiveCompression
+   * @returns {Buffer | import("node:stream").Readable}
+   */
+  archiveBody(archive, archiveCompression) {
+    if (archiveCompression === "identity") {
+      return archive
+    }
+
+    if (archiveCompression === "gzip") {
+      return this.gzipArchive(archive)
+    }
+
+    throw new Error(`Unsupported Docker archive compression: ${archiveCompression}`)
+  }
+
+  /**
+   * @param {Buffer | import("node:stream").Readable} archive
+   * @returns {import("node:stream").Readable}
+   */
+  gzipArchive(archive) {
+    const source = Buffer.isBuffer(archive) ? Readable.from(archive) : archive
+    const gzip = createGzip()
+
+    source.on("error", (error) => {
+      gzip.destroy(error)
+    })
+    source.pipe(gzip)
+
+    return gzip
   }
 
   /**
@@ -266,7 +306,7 @@ class DockerContainers {
   /**
    * Consume a Docker log stream, stripping the 8-byte multiplexed frame headers.
    * Each frame: [stream_type(1 byte), 0, 0, 0, size(4 bytes big-endian), payload(size bytes)].
-   * @param {import("node:http").IncomingMessage} stream
+   * @param {import("node:stream").Readable} stream
    * @param {((output: {stream: "stdout" | "stderr", data: string}) => void)} [onOutput] - Called with each frame as it arrives
    * @returns {Promise<string>}
    */
@@ -336,7 +376,7 @@ class DockerContainers {
    * When onOutput is provided, frames are forwarded live and not accumulated in memory.
    * Frame format: [stream_type(1 byte), 0, 0, 0, size(4 bytes big-endian), payload].
    * Stream type 1 = stdout, 2 = stderr.
-   * @param {import("node:http").IncomingMessage} stream
+   * @param {import("node:stream").Readable} stream
    * @param {((output: {stream: "stdout" | "stderr", data: string}) => void)} [onOutput] - Called with each frame as it arrives
    * @returns {Promise<{stdout: string, stderr: string}>}
    */

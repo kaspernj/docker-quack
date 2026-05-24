@@ -1,5 +1,6 @@
 import * as http from "node:http"
 import * as https from "node:https"
+import * as zlib from "node:zlib"
 
 /**
  * @typedef {object} TlsOptions
@@ -42,6 +43,7 @@ import * as https from "node:https"
 
 const RETRYABLE_ERROR_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENOENT", "ETIMEDOUT", "EPIPE"])
 const RETRYABLE_DOCKER_API_STATUS_CODES = new Set([502, 503, 504])
+const DEFAULT_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
 
 /** Docker Engine API error with status metadata. */
 export class DockerApiError extends Error {
@@ -162,7 +164,7 @@ class DockerConnection {
   requestRawOnce(options) {
     return new Promise((resolve, reject) => {
       const fullPath = this.buildPath(options.path, options.query)
-      const headers = {...options.headers}
+      const headers = this.requestHeaders(options.headers)
 
       let bodyData = null
 
@@ -196,13 +198,22 @@ class DockerConnection {
       }
 
       const req = this.httpModule.request(requestOptions, (res) => {
+        let responseStream
+
+        try {
+          responseStream = this.decodedResponseStream(res)
+        } catch (error) {
+          reject(error)
+          return
+        }
+
         const chunks = []
 
-        res.on("data", (chunk) => {
+        responseStream.on("data", (chunk) => {
           chunks.push(chunk)
         })
 
-        res.on("end", () => {
+        responseStream.on("end", () => {
           const buffer = Buffer.concat(chunks)
 
           if (res.statusCode >= 400) {
@@ -228,7 +239,7 @@ class DockerConnection {
           resolve(buffer)
         })
 
-        res.on("error", reject)
+        responseStream.on("error", reject)
       })
 
       req.on("error", reject)
@@ -244,6 +255,77 @@ class DockerConnection {
         req.end()
       }
     })
+  }
+
+  /**
+   * @param {object | undefined} headers
+   * @returns {Record<string, string>}
+   */
+  requestHeaders(headers) {
+    const requestHeaders = {...headers}
+
+    if (!Object.keys(requestHeaders).some((key) => key.toLowerCase() === "accept-encoding")) {
+      requestHeaders["Accept-Encoding"] = DEFAULT_ACCEPT_ENCODING
+    }
+
+    return requestHeaders
+  }
+
+  /**
+   * @param {import("node:http").IncomingMessage} response
+   * @returns {import("node:stream").Readable}
+   */
+  decodedResponseStream(response) {
+    const encodings = this.responseContentEncodings(response.headers["content-encoding"])
+    /** @type {import("node:stream").Readable} */
+    let stream = response
+
+    for (let index = encodings.length - 1; index >= 0; index -= 1) {
+      stream = stream.pipe(this.responseDecoder(encodings[index]))
+    }
+
+    return stream
+  }
+
+  /**
+   * @param {string | string[] | undefined} header
+   * @returns {string[]}
+   */
+  responseContentEncodings(header) {
+    if (!header) {
+      return []
+    }
+
+    const headerValue = Array.isArray(header) ? header.join(",") : header
+
+    return headerValue
+      .split(",")
+      .map((encoding) => encoding.trim().toLowerCase())
+      .filter((encoding) => encoding && encoding !== "identity")
+  }
+
+  /**
+   * @param {string} encoding
+   * @returns {import("node:stream").Transform}
+   */
+  responseDecoder(encoding) {
+    if (encoding === "gzip" || encoding === "x-gzip") {
+      return zlib.createGunzip()
+    }
+
+    if (encoding === "deflate") {
+      return zlib.createInflate()
+    }
+
+    if (encoding === "br") {
+      return zlib.createBrotliDecompress()
+    }
+
+    if (encoding === "zstd" && typeof zlib.createZstdDecompress === "function") {
+      return zlib.createZstdDecompress()
+    }
+
+    throw new Error(`Unsupported Docker response content encoding: ${encoding}`)
   }
 
   /**
@@ -329,12 +411,12 @@ class DockerConnection {
    * Perform an HTTP request and return the raw response stream.
    * Used for endpoints that stream data (logs, pull progress, exec output).
    * @param {RequestOptions} options
-   * @returns {Promise<{stream: import("node:http").IncomingMessage, statusCode: number}>}
+   * @returns {Promise<{stream: import("node:stream").Readable, statusCode: number}>}
    */
   requestStream(options) {
     return new Promise((resolve, reject) => {
       const fullPath = this.buildPath(options.path, options.query)
-      const headers = {...options.headers}
+      const headers = this.requestHeaders(options.headers)
       let settled = false
 
       if (options.signal?.aborted) {
@@ -377,21 +459,34 @@ class DockerConnection {
         req.destroy(new Error("Docker request aborted."))
       }
       const req = this.httpModule.request(requestOptions, (res) => {
+        let responseStream
+
+        try {
+          responseStream = this.decodedResponseStream(res)
+        } catch (error) {
+          if (!settled) {
+            settled = true
+            reject(error)
+          }
+
+          return
+        }
+
         const abortStream = () => {
-          res.destroy(new Error("Docker request aborted."))
+          responseStream.destroy(new Error("Docker request aborted."))
         }
 
         removeAbortListener()
         options.signal?.addEventListener("abort", abortStream, {once: true})
-        res.on("close", () => {
+        responseStream.on("close", () => {
           options.signal?.removeEventListener("abort", abortStream)
         })
 
         if (res.statusCode >= 400) {
           const chunks = []
 
-          res.on("data", (chunk) => chunks.push(chunk))
-          res.on("end", () => {
+          responseStream.on("data", (chunk) => chunks.push(chunk))
+          responseStream.on("end", () => {
             const buffer = Buffer.concat(chunks)
             let message
 
@@ -407,12 +502,18 @@ class DockerConnection {
               reject(new Error(`Docker API error ${res.statusCode} ${options.method} ${fullPath}: ${message}`))
             }
           })
+          responseStream.on("error", (error) => {
+            if (!settled) {
+              settled = true
+              reject(error)
+            }
+          })
 
           return
         }
 
         settled = true
-        resolve({stream: res, statusCode: res.statusCode})
+        resolve({stream: responseStream, statusCode: res.statusCode})
       })
 
       options.signal?.addEventListener("abort", abortRequest, {once: true})

@@ -1,4 +1,5 @@
 import http from "node:http"
+import {gunzipSync} from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import Docker from "../src/index.js"
 
@@ -18,14 +19,17 @@ function jsonResponse(res, statusCode, body) {
 }
 
 function captureRequest(req, callback) {
-  let body = ""
+  const chunks = []
 
-  req.on("data", (chunk) => { body += chunk })
+  req.on("data", (chunk) => { chunks.push(chunk) })
   req.on("end", () => {
+    const bodyBuffer = Buffer.concat(chunks)
+
     callback({
       method: req.method,
       url: req.url,
-      body,
+      body: bodyBuffer.toString("utf8"),
+      bodyBuffer,
       headers: req.headers
     })
   })
@@ -235,6 +239,69 @@ describe("DockerContainers", () => {
       expect(requests[0].url).toEqual("/commit?container=abc123&repo=my-repo&tag=latest")
       expect(requests[1].url).toEqual("/commit?container=abc123&repo=my-repo&tag=latest")
       expect(result.Id).toEqual("sha256:committed-after-retry")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("putArchive() gzips archive uploads by default", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200)
+        res.end()
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.containers.putArchive({
+        id: "abc123",
+        path: "/tmp",
+        archive: Buffer.from("tar payload")
+      })
+
+      expect(captured.method).toEqual("PUT")
+      expect(captured.url).toEqual("/containers/abc123/archive?path=%2Ftmp")
+      expect(captured.headers["content-type"]).toEqual("application/x-tar")
+      expect(gunzipSync(captured.bodyBuffer).toString("utf8")).toEqual("tar payload")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("putArchive() supports identity archive uploads", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200)
+        res.end()
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.containers.putArchive({
+        id: "abc123",
+        path: "/tmp",
+        archive: Buffer.from("tar payload"),
+        archiveCompression: "identity"
+      })
+
+      expect(captured.method).toEqual("PUT")
+      expect(captured.url).toEqual("/containers/abc123/archive?path=%2Ftmp")
+      expect(captured.headers["content-type"]).toEqual("application/x-tar")
+      expect(captured.bodyBuffer.toString("utf8")).toEqual("tar payload")
     } finally {
       docker.close()
       server.close()
