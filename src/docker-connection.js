@@ -83,7 +83,11 @@ class DockerConnection {
     this.useTls = !!options.tls
 
     const protocol = this.useTls ? "https" : "http"
-    const baseUrl = this.socketPath ? `${protocol}://localhost` : `${protocol}://${this.host}:${this.port}`
+    // Bracket IPv6 literals (for example `::1`) so the composed URL is valid;
+    // Node's HTTP client used to receive hostname/port separately and handled
+    // this for us.
+    const urlHost = this.host && this.host.includes(":") && !this.host.startsWith("[") ? `[${this.host}]` : this.host
+    const baseUrl = this.socketPath ? `${protocol}://localhost` : `${protocol}://${urlHost}:${this.port}`
 
     this.client = new SnapReq({
       baseUrl,

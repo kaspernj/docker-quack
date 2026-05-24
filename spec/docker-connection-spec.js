@@ -56,6 +56,16 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("brackets IPv6 hosts when composing the base URL", () => {
+    const connection = new DockerConnection({host: "::1", port: 2375})
+
+    try {
+      expect(connection.client.baseUrl).toEqual("http://[::1]:2375")
+    } finally {
+      connection.close()
+    }
+  })
+
   it("creates a Unix-socket connection", () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375, socketPath: "/var/run/docker.sock"})
 
