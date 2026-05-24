@@ -9,7 +9,9 @@ Docker Engine API client with HTTP keep-alive for Node.js.
 - Full Docker Engine API coverage: containers, images, networks, volumes
 - Container exec with multiplexed stdout/stderr parsing
 - Container log streaming with frame header parsing
-- Container archive upload/download (tar)
+- Container archive upload/download, with gzip-compressed archive uploads by default
+- HTTP response compression requested by default, with gzip, deflate, Brotli, and zstd decoding where supported by Node.js
+- Optional HTTP request body compression for endpoints that accept compressed request bodies
 - Container commit retries for transient Docker daemon/containerd failures
 - Image pull with streaming progress and registry authentication
 - TLS client certificate support
@@ -92,8 +94,9 @@ const allContainers = await docker.containers.list({all: true})
 // Commit to image
 await docker.containers.commit({id: Id, repo: "my-repo", tag: "latest"})
 
-// Archive upload/download
+// Archive upload/download. putArchive gzips the uploaded tar by default.
 await docker.containers.putArchive({id: Id, path: "/tmp", archive: tarBuffer})
+await docker.containers.putArchive({id: Id, path: "/tmp", archive: tarBuffer, archiveCompression: "identity"})
 const tar = await docker.containers.getArchive({id: Id, path: "/etc/hostname"})
 
 // Stop and remove

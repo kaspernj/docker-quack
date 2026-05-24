@@ -1,7 +1,47 @@
 import http from "node:http"
 import * as https from "node:https"
+import * as zlib from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import DockerConnection from "../src/docker-connection.js"
+
+const supportedResponseContentEncodings = () => [
+  "gzip",
+  "deflate",
+  "br",
+  ...(typeof zlib.createZstdDecompress === "function" ? ["zstd"] : [])
+]
+const supportedRequestBodyCompressionEncodings = () => [
+  "gzip",
+  "deflate",
+  "br",
+  ...(typeof zlib.createZstdCompress === "function" && typeof zlib.zstdDecompressSync === "function" ? ["zstd"] : [])
+]
+
+const decodeRequestBody = (body, encodingHeader) => {
+  const encoding = Array.isArray(encodingHeader) ? encodingHeader.join(",") : encodingHeader
+
+  if (!encoding || encoding === "identity") {
+    return body
+  }
+
+  if (encoding === "gzip") {
+    return zlib.gunzipSync(body)
+  }
+
+  if (encoding === "deflate") {
+    return zlib.inflateSync(body)
+  }
+
+  if (encoding === "br") {
+    return zlib.brotliDecompressSync(body)
+  }
+
+  if (encoding === "zstd" && typeof zlib.zstdDecompressSync === "function") {
+    return zlib.zstdDecompressSync(body)
+  }
+
+  throw new Error(`Unsupported request body encoding in spec: ${encoding}`)
+}
 
 describe("DockerConnection", () => {
   it("creates an HTTP connection with keep-alive", () => {
@@ -114,6 +154,179 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("requests supported response content encodings by default", async () => {
+    let acceptEncoding = null
+
+    const server = http.createServer((req, res) => {
+      acceptEncoding = req.headers["accept-encoding"]
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({ApiVersion: "1.45"}))
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      await connection.request({method: "GET", path: "/version"})
+
+      expect(acceptEncoding).toEqual(supportedResponseContentEncodings().join(", "))
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("does not overwrite an explicit Accept-Encoding header", async () => {
+    let acceptEncoding = null
+
+    const server = http.createServer((req, res) => {
+      acceptEncoding = req.headers["accept-encoding"]
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({ApiVersion: "1.45"}))
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      await connection.request({
+        method: "GET",
+        path: "/version",
+        headers: {"Accept-Encoding": "identity"}
+      })
+
+      expect(acceptEncoding).toEqual("identity")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("decodes gzip and deflate buffered responses", async () => {
+    let requestCount = 0
+    const gzipBody = zlib.gzipSync(Buffer.from(JSON.stringify({encoding: "gzip"})))
+    const deflateBody = zlib.deflateSync(Buffer.from(JSON.stringify({encoding: "deflate"})))
+
+    const server = http.createServer((_req, res) => {
+      requestCount += 1
+
+      if (requestCount === 1) {
+        res.writeHead(200, {"Content-Encoding": "gzip", "Content-Type": "application/json"})
+        res.end(gzipBody)
+      } else {
+        res.writeHead(200, {"Content-Encoding": "deflate", "Content-Type": "application/json"})
+        res.end(deflateBody)
+      }
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      const gzipResult = await connection.request({method: "GET", path: "/gzip"})
+      const deflateResult = await connection.request({method: "GET", path: "/deflate"})
+
+      expect(gzipResult).toEqual({encoding: "gzip"})
+      expect(deflateResult).toEqual({encoding: "deflate"})
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("decodes brotli and zstd buffered responses when Node supports them", async () => {
+    const responseBodies = [
+      {
+        body: zlib.brotliCompressSync(Buffer.from(JSON.stringify({encoding: "br"}))),
+        encoding: "br"
+      }
+    ]
+
+    if (typeof zlib.zstdCompressSync === "function") {
+      responseBodies.push({
+        body: zlib.zstdCompressSync(Buffer.from(JSON.stringify({encoding: "zstd"}))),
+        encoding: "zstd"
+      })
+    }
+
+    let requestIndex = 0
+    const server = http.createServer((_req, res) => {
+      const responseBody = responseBodies[requestIndex]
+
+      requestIndex += 1
+      res.writeHead(200, {"Content-Encoding": responseBody.encoding, "Content-Type": "application/json"})
+      res.end(responseBody.body)
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      for (const responseBody of responseBodies) {
+        const result = await connection.request({method: "GET", path: `/${responseBody.encoding}`})
+
+        expect(result).toEqual({encoding: responseBody.encoding})
+      }
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("decodes gzip streaming responses before returning the stream", async () => {
+    const payload = zlib.gzipSync(Buffer.from("compressed stream output"))
+
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {"Content-Encoding": "gzip", "Content-Type": "application/vnd.docker.raw-stream"})
+      res.end(payload)
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      const {stream} = await connection.requestStream({method: "GET", path: "/stream"})
+      const chunks = []
+
+      for await (const chunk of stream) {
+        chunks.push(chunk)
+      }
+
+      expect(Buffer.concat(chunks).toString("utf8")).toEqual("compressed stream output")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("fails clearly for unsupported response content encodings", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {"Content-Encoding": "compress", "Content-Type": "application/json"})
+      res.end(JSON.stringify({ApiVersion: "1.45"}))
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+    let thrownError = null
+
+    try {
+      await connection.request({method: "GET", path: "/version"})
+    } catch (error) {
+      thrownError = error
+    } finally {
+      connection.close()
+      server.close()
+    }
+
+    expect(thrownError?.message).toEqual("Unsupported Docker response content encoding: compress")
+  })
+
   it("makes a POST request with JSON body", async () => {
     let capturedRequest = null
 
@@ -154,6 +367,75 @@ describe("DockerConnection", () => {
       connection.close()
       server.close()
     }
+  })
+
+  it("compresses request bodies when bodyCompression is set", async () => {
+    const capturedRequests = []
+
+    const server = http.createServer((req, res) => {
+      const chunks = []
+
+      req.on("data", (chunk) => {
+        chunks.push(chunk)
+      })
+      req.on("end", () => {
+        const decodedBody = decodeRequestBody(Buffer.concat(chunks), req.headers["content-encoding"])
+
+        capturedRequests.push({
+          contentEncoding: req.headers["content-encoding"],
+          contentLength: req.headers["content-length"],
+          parsedBody: JSON.parse(decodedBody.toString("utf-8"))
+        })
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({ok: true}))
+      })
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+    const encodings = supportedRequestBodyCompressionEncodings()
+
+    try {
+      for (const encoding of encodings) {
+        const result = await connection.request({
+          method: "POST",
+          path: `/containers/create/${encoding}`,
+          body: {Image: `ubuntu:${encoding}`},
+          bodyCompression: encoding
+        })
+
+        expect(result).toEqual({ok: true})
+      }
+
+      expect(capturedRequests.map((request) => request.contentEncoding)).toEqual(encodings)
+      expect(capturedRequests.map((request) => request.contentLength)).toEqual(encodings.map(() => undefined))
+      expect(capturedRequests.map((request) => request.parsedBody)).toEqual(encodings.map((encoding) => ({Image: `ubuntu:${encoding}`})))
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("does not combine bodyCompression with an explicit Content-Encoding header", async () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
+    let thrownError = null
+
+    try {
+      await connection.request({
+        method: "POST",
+        path: "/containers/create",
+        body: {Image: "ubuntu:24.04"},
+        bodyCompression: "gzip",
+        headers: {"Content-Encoding": "gzip"}
+      })
+    } catch (error) {
+      thrownError = error
+    } finally {
+      connection.close()
+    }
+
+    expect(thrownError?.message).toEqual("Cannot combine bodyCompression with an explicit Content-Encoding header.")
   })
 
   it("handles 404 error responses by throwing with status and message", async () => {
