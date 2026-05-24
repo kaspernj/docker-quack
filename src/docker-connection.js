@@ -1,7 +1,5 @@
-import {Readable} from "node:stream"
-import * as http from "node:http"
-import * as https from "node:https"
 import * as zlib from "node:zlib"
+import SnapReq from "snapreq"
 
 /**
  * @typedef {object} TlsOptions
@@ -66,7 +64,13 @@ export class DockerApiError extends Error {
   }
 }
 
-/** Low-level HTTP/HTTPS client with keep-alive for the Docker Engine API. */
+/**
+ * Low-level Docker Engine API client. The cross-platform HTTP plumbing
+ * (keep-alive, Unix sockets, client TLS, request/response compression and
+ * streaming) is provided by `snapreq`; this class layers the Docker-specific
+ * policy on top: the default `Accept-Encoding`, JSON/text response parsing,
+ * `DockerApiError`, and retrying transient Docker API / connection failures.
+ */
 class DockerConnection {
   /**
    * @param {ConnectionOptions} options
@@ -75,21 +79,22 @@ class DockerConnection {
     this.host = options.host
     this.port = options.port
     this.socketPath = options.socketPath
+    this.tls = options.tls
     this.useTls = !!options.tls
 
-    if (this.useTls) {
-      this.agent = new https.Agent({
-        keepAlive: true,
-        ca: options.tls.ca,
-        cert: options.tls.cert,
-        key: options.tls.key,
-        ...(options.tls.rejectUnauthorized !== undefined ? {rejectUnauthorized: options.tls.rejectUnauthorized} : {})
-      })
-    } else {
-      this.agent = new http.Agent({keepAlive: true})
-    }
+    const protocol = this.useTls ? "https" : "http"
+    // Bracket IPv6 literals (for example `::1`) so the composed URL is valid;
+    // Node's HTTP client used to receive hostname/port separately and handled
+    // this for us.
+    const urlHost = this.host && this.host.includes(":") && !this.host.startsWith("[") ? `[${this.host}]` : this.host
+    const baseUrl = this.socketPath ? `${protocol}://localhost` : `${protocol}://${urlHost}:${this.port}`
 
-    this.httpModule = this.useTls ? https : http
+    this.client = new SnapReq({
+      baseUrl,
+      socketPath: this.socketPath,
+      tls: options.tls,
+      keepAlive: true
+    })
   }
 
   /**
@@ -167,88 +172,22 @@ class DockerConnection {
    * @param {RequestOptions} options
    * @returns {Promise<Buffer>}
    */
-  requestRawOnce(options) {
-    return new Promise((resolve, reject) => {
-      const fullPath = this.buildPath(options.path, options.query)
-      const headers = this.requestHeaders(options.headers)
-      const requestBody = this.prepareRequestBody({
-        body: options.body,
-        bodyCompression: options.bodyCompression,
-        headers,
-        streamBody: true
-      })
-
-      const requestOptions = {
-        path: fullPath,
-        method: options.method,
-        agent: this.agent,
-        headers
-      }
-
-      if (this.socketPath) {
-        requestOptions.socketPath = this.socketPath
-      } else {
-        requestOptions.hostname = this.host
-        requestOptions.port = this.port
-      }
-
-      const req = this.httpModule.request(requestOptions, (res) => {
-        let responseStream
-
-        try {
-          responseStream = this.decodedResponseStream(res)
-        } catch (error) {
-          reject(error)
-          return
-        }
-
-        const chunks = []
-
-        responseStream.on("data", (chunk) => {
-          chunks.push(chunk)
-        })
-
-        responseStream.on("end", () => {
-          const buffer = Buffer.concat(chunks)
-
-          if (res.statusCode >= 400) {
-            let message
-
-            try {
-              const parsed = JSON.parse(buffer.toString("utf-8"))
-              message = parsed.message || buffer.toString("utf-8")
-            } catch {
-              message = buffer.toString("utf-8")
-            }
-
-            reject(new DockerApiError({
-              message: `Docker API error ${res.statusCode} ${options.method} ${fullPath}: ${message}`,
-              method: options.method,
-              path: fullPath,
-              responseMessage: message,
-              statusCode: res.statusCode
-            }))
-            return
-          }
-
-          resolve(buffer)
-        })
-
-        responseStream.on("error", reject)
-      })
-
-      req.on("error", reject)
-
-      if (requestBody.stream) {
-        requestBody.stream.pipe(req)
-      } else {
-        if (requestBody.buffer) {
-          req.write(requestBody.buffer)
-        }
-
-        req.end()
-      }
+  async requestRawOnce(options) {
+    const fullPath = this.buildPath(options.path, options.query)
+    const response = await this.client.request({
+      method: options.method,
+      path: fullPath,
+      body: options.body,
+      bodyCompression: options.bodyCompression,
+      headers: this.requestHeaders(options.headers),
+      signal: options.signal
     })
+
+    if (response.status >= 400) {
+      throw this.apiError(response, options.method, fullPath, await response.buffer())
+    }
+
+    return await response.buffer()
   }
 
   /**
@@ -266,153 +205,30 @@ class DockerConnection {
   }
 
   /**
-   * @param {{body: object | Buffer | import("node:stream").Readable | undefined, bodyCompression: CompressionEncoding | undefined, headers: Record<string, string>, streamBody: boolean}} args
-   * @returns {{buffer: Buffer | null, stream: import("node:stream").Readable | null}}
+   * @param {import("snapreq/response").default} response - Failed response.
+   * @param {string} method - HTTP method.
+   * @param {string} fullPath - Resolved request path.
+   * @param {Buffer} buffer - Response body.
+   * @returns {DockerApiError}
    */
-  prepareRequestBody({body, bodyCompression = "identity", headers, streamBody}) {
-    if (body === undefined || body === null) {
-      return {buffer: null, stream: null}
+  apiError(response, method, fullPath, buffer) {
+    let message
+
+    try {
+      const parsed = JSON.parse(buffer.toString("utf-8"))
+
+      message = parsed.message || buffer.toString("utf-8")
+    } catch {
+      message = buffer.toString("utf-8")
     }
 
-    /** @type {Buffer | null} */
-    let buffer = null
-    /** @type {import("node:stream").Readable | null} */
-    let stream = null
-
-    if (Buffer.isBuffer(body)) {
-      buffer = body
-      headers["Content-Type"] = headers["Content-Type"] || "application/octet-stream"
-    } else if (streamBody && typeof body === "object" && typeof body.pipe === "function") {
-      stream = body
-      headers["Content-Type"] = headers["Content-Type"] || "application/octet-stream"
-    } else if (typeof body === "object") {
-      buffer = Buffer.from(JSON.stringify(body))
-      headers["Content-Type"] = headers["Content-Type"] || "application/json"
-    }
-
-    if (bodyCompression === "identity") {
-      if (buffer) {
-        headers["Content-Length"] = String(buffer.length)
-      }
-
-      return {buffer, stream}
-    }
-
-    if (this.hasRequestHeader(headers, "content-encoding")) {
-      throw new Error("Cannot combine bodyCompression with an explicit Content-Encoding header.")
-    }
-
-    headers["Content-Encoding"] = bodyCompression
-
-    const compressor = this.requestBodyCompressor(bodyCompression)
-
-    if (stream) {
-      stream.on("error", (error) => {
-        compressor.destroy(error)
-      })
-      stream.pipe(compressor)
-
-      return {buffer: null, stream: compressor}
-    }
-
-    const bodyStream = Readable.from(/** @type {Buffer} */ (buffer))
-
-    bodyStream.on("error", (error) => {
-      compressor.destroy(error)
+    return new DockerApiError({
+      message: `Docker API error ${response.status} ${method} ${fullPath}: ${message}`,
+      method,
+      path: fullPath,
+      responseMessage: message,
+      statusCode: response.status
     })
-    bodyStream.pipe(compressor)
-
-    return {buffer: null, stream: compressor}
-  }
-
-  /**
-   * @param {CompressionEncoding} encoding
-   * @returns {import("node:stream").Transform}
-   */
-  requestBodyCompressor(encoding) {
-    if (encoding === "gzip") {
-      return zlib.createGzip()
-    }
-
-    if (encoding === "deflate") {
-      return zlib.createDeflate()
-    }
-
-    if (encoding === "br") {
-      return zlib.createBrotliCompress()
-    }
-
-    if (encoding === "zstd" && typeof zlib.createZstdCompress === "function") {
-      return zlib.createZstdCompress()
-    }
-
-    throw new Error(`Unsupported Docker request body compression: ${encoding}`)
-  }
-
-  /**
-   * @param {Record<string, string>} headers
-   * @param {string} headerName
-   * @returns {boolean}
-   */
-  hasRequestHeader(headers, headerName) {
-    return Object.keys(headers).some((key) => key.toLowerCase() === headerName)
-  }
-
-  /**
-   * @param {import("node:http").IncomingMessage} response
-   * @returns {import("node:stream").Readable}
-   */
-  decodedResponseStream(response) {
-    const encodings = this.responseContentEncodings(response.headers["content-encoding"])
-    /** @type {import("node:stream").Readable} */
-    let stream = response
-
-    for (let index = encodings.length - 1; index >= 0; index -= 1) {
-      stream = stream.pipe(this.responseDecoder(encodings[index]))
-    }
-
-    return stream
-  }
-
-  /**
-   * @param {string | string[] | undefined} header
-   * @returns {string[]}
-   */
-  responseContentEncodings(header) {
-    if (!header) {
-      return []
-    }
-
-    const headerValue = Array.isArray(header) ? header.join(",") : header
-
-    return headerValue
-      .split(",")
-      .map((encoding) => encoding.trim().toLowerCase())
-      .filter((encoding) => encoding && encoding !== "identity")
-  }
-
-  /**
-   * @param {string} encoding
-   * @returns {import("node:stream").Transform}
-   */
-  responseDecoder(encoding) {
-    if (encoding === "gzip" || encoding === "x-gzip") {
-      return zlib.createGunzip()
-    }
-
-    if (encoding === "deflate") {
-      return zlib.createInflate()
-    }
-
-    if (encoding === "br") {
-      return zlib.createBrotliDecompress()
-    }
-
-    if (encoding === "zstd" && typeof zlib.createZstdDecompress === "function") {
-      return zlib.createZstdDecompress()
-    }
-
-    throw new Error(`Unsupported Docker response content encoding: ${encoding}`)
   }
 
   /**
@@ -500,126 +316,42 @@ class DockerConnection {
    * @param {RequestOptions} options
    * @returns {Promise<{stream: import("node:stream").Readable, statusCode: number}>}
    */
-  requestStream(options) {
-    return new Promise((resolve, reject) => {
-      const fullPath = this.buildPath(options.path, options.query)
-      const headers = this.requestHeaders(options.headers)
-      const requestBody = this.prepareRequestBody({
-        body: options.body,
-        bodyCompression: options.bodyCompression,
-        headers,
-        streamBody: true
-      })
-      let settled = false
-
-      if (options.signal?.aborted) {
-        reject(new Error("Docker request aborted."))
-        return
-      }
-
-      const requestOptions = {
-        path: fullPath,
-        method: options.method,
-        agent: this.agent,
-        headers
-      }
-
-      if (this.socketPath) {
-        requestOptions.socketPath = this.socketPath
-      } else {
-        requestOptions.hostname = this.host
-        requestOptions.port = this.port
-      }
-
-      const removeAbortListener = () => {
-        options.signal?.removeEventListener("abort", abortRequest)
-      }
-      const abortRequest = () => {
-        req.destroy(new Error("Docker request aborted."))
-      }
-      const req = this.httpModule.request(requestOptions, (res) => {
-        let responseStream
-
-        try {
-          responseStream = this.decodedResponseStream(res)
-        } catch (error) {
-          if (!settled) {
-            settled = true
-            reject(error)
-          }
-
-          return
-        }
-
-        const abortStream = () => {
-          responseStream.destroy(new Error("Docker request aborted."))
-        }
-
-        removeAbortListener()
-        options.signal?.addEventListener("abort", abortStream, {once: true})
-        responseStream.on("close", () => {
-          options.signal?.removeEventListener("abort", abortStream)
-        })
-
-        if (res.statusCode >= 400) {
-          const chunks = []
-
-          responseStream.on("data", (chunk) => chunks.push(chunk))
-          responseStream.on("end", () => {
-            const buffer = Buffer.concat(chunks)
-            let message
-
-            try {
-              const parsed = JSON.parse(buffer.toString("utf-8"))
-              message = parsed.message || buffer.toString("utf-8")
-            } catch {
-              message = buffer.toString("utf-8")
-            }
-
-            if (!settled) {
-              settled = true
-              reject(new Error(`Docker API error ${res.statusCode} ${options.method} ${fullPath}: ${message}`))
-            }
-          })
-          responseStream.on("error", (error) => {
-            if (!settled) {
-              settled = true
-              reject(error)
-            }
-          })
-
-          return
-        }
-
-        settled = true
-        resolve({stream: responseStream, statusCode: res.statusCode})
-      })
-
-      options.signal?.addEventListener("abort", abortRequest, {once: true})
-      req.on("error", (error) => {
-        removeAbortListener()
-
-        if (!settled) {
-          settled = true
-          reject(error)
-        }
-      })
-
-      if (requestBody.stream) {
-        requestBody.stream.pipe(req)
-      } else {
-        if (requestBody.buffer) {
-          req.write(requestBody.buffer)
-        }
-
-        req.end()
-      }
+  async requestStream(options) {
+    const fullPath = this.buildPath(options.path, options.query)
+    const response = await this.client.requestStream({
+      method: options.method,
+      path: fullPath,
+      body: options.body,
+      bodyCompression: options.bodyCompression,
+      headers: this.requestHeaders(options.headers),
+      signal: options.signal
     })
+
+    if (response.status >= 400) {
+      const buffer = await response.buffer()
+      let message
+
+      try {
+        const parsed = JSON.parse(buffer.toString("utf-8"))
+
+        message = parsed.message || buffer.toString("utf-8")
+      } catch {
+        message = buffer.toString("utf-8")
+      }
+
+      throw new Error(`Docker API error ${response.status} ${options.method} ${fullPath}: ${message}`)
+    }
+
+    if (!response.nodeStream) {
+      throw new Error("Docker streaming requires the Node transport, which exposes a raw stream.")
+    }
+
+    return {stream: response.nodeStream, statusCode: response.status}
   }
 
   /** Destroy the keep-alive agent, closing all persistent connections. */
   close() {
-    this.agent.destroy()
+    this.client.close()
   }
 }
 

@@ -1,5 +1,4 @@
 import http from "node:http"
-import * as https from "node:https"
 import * as zlib from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import DockerConnection from "../src/docker-connection.js"
@@ -44,34 +43,41 @@ const decodeRequestBody = (body, encodingHeader) => {
 }
 
 describe("DockerConnection", () => {
-  it("creates an HTTP connection with keep-alive", () => {
+  it("creates an HTTP connection", () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
 
     try {
       expect(connection.host).toEqual("127.0.0.1")
       expect(connection.port).toEqual(2375)
       expect(connection.useTls).toEqual(false)
-      expect(connection.agent).toBeInstanceOf(http.Agent)
-      expect(connection.agent.keepAlive).toEqual(true)
+      expect(connection.socketPath).toEqual(undefined)
     } finally {
       connection.close()
     }
   })
 
-  it("creates a Unix-socket connection with keep-alive", () => {
+  it("brackets IPv6 hosts when composing the base URL", () => {
+    const connection = new DockerConnection({host: "::1", port: 2375})
+
+    try {
+      expect(connection.client.baseUrl).toEqual("http://[::1]:2375")
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("creates a Unix-socket connection", () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375, socketPath: "/var/run/docker.sock"})
 
     try {
       expect(connection.socketPath).toEqual("/var/run/docker.sock")
       expect(connection.useTls).toEqual(false)
-      expect(connection.agent).toBeInstanceOf(http.Agent)
-      expect(connection.agent.keepAlive).toEqual(true)
     } finally {
       connection.close()
     }
   })
 
-  it("creates an HTTPS connection with TLS options", () => {
+  it("creates an HTTPS connection that forwards TLS options to the transport", () => {
     const tlsOptions = {
       ca: "fake-ca-cert",
       cert: "fake-client-cert",
@@ -81,16 +87,13 @@ describe("DockerConnection", () => {
 
     try {
       expect(connection.useTls).toEqual(true)
-      expect(connection.agent.keepAlive).toEqual(true)
-      expect(connection.agent.constructor.name).toEqual("Agent")
-      expect(connection.httpModule.request).toEqual(https.request)
-      expect(connection.agent.options.rejectUnauthorized).toEqual(undefined)
+      expect(connection.tls).toEqual(tlsOptions)
     } finally {
       connection.close()
     }
   })
 
-  it("forwards rejectUnauthorized=false to the https.Agent so untrusted server certs are accepted", () => {
+  it("forwards rejectUnauthorized=false to the transport so untrusted server certs are accepted", () => {
     const connection = new DockerConnection({
       host: "127.0.0.1",
       port: 2376,
@@ -104,13 +107,13 @@ describe("DockerConnection", () => {
 
     try {
       expect(connection.useTls).toEqual(true)
-      expect(connection.agent.options.rejectUnauthorized).toEqual(false)
+      expect(connection.tls.rejectUnauthorized).toEqual(false)
     } finally {
       connection.close()
     }
   })
 
-  it("forwards rejectUnauthorized=true to the https.Agent when explicitly requested", () => {
+  it("forwards rejectUnauthorized=true to the transport when explicitly requested", () => {
     const connection = new DockerConnection({
       host: "127.0.0.1",
       port: 2376,
@@ -123,7 +126,7 @@ describe("DockerConnection", () => {
     })
 
     try {
-      expect(connection.agent.options.rejectUnauthorized).toEqual(true)
+      expect(connection.tls.rejectUnauthorized).toEqual(true)
     } finally {
       connection.close()
     }
@@ -324,7 +327,8 @@ describe("DockerConnection", () => {
       server.close()
     }
 
-    expect(thrownError?.message).toEqual("Unsupported Docker response content encoding: compress")
+    expect(thrownError).not.toEqual(null)
+    expect(thrownError.message).toMatch(/response content-encoding "compress"/)
   })
 
   it("makes a POST request with JSON body", async () => {
@@ -435,7 +439,8 @@ describe("DockerConnection", () => {
       connection.close()
     }
 
-    expect(thrownError?.message).toEqual("Cannot combine bodyCompression with an explicit Content-Encoding header.")
+    expect(thrownError).not.toEqual(null)
+    expect(thrownError.message).toMatch(/cannot combine bodyCompression with an explicit Content-Encoding header/i)
   })
 
   it("handles 404 error responses by throwing with status and message", async () => {
@@ -644,18 +649,18 @@ describe("DockerConnection", () => {
     }
   })
 
-  it("close() destroys the agent", () => {
+  it("close() closes the underlying transport", () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
-    let destroyCalled = false
-    const originalDestroy = connection.agent.destroy.bind(connection.agent)
+    let closeCalled = false
+    const originalClose = connection.client.close.bind(connection.client)
 
-    connection.agent.destroy = () => {
-      destroyCalled = true
-      originalDestroy()
+    connection.client.close = () => {
+      closeCalled = true
+      originalClose()
     }
 
     connection.close()
 
-    expect(destroyCalled).toEqual(true)
+    expect(closeCalled).toEqual(true)
   })
 })

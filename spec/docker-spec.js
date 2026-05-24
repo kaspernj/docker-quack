@@ -113,16 +113,16 @@ describe("Docker", () => {
 
   it("close() closes the connection", () => {
     const docker = Docker.open({host: "127.0.0.1", port: 2375})
-    let destroyCalled = false
-    const originalDestroy = docker.connection.agent.destroy.bind(docker.connection.agent)
+    let closeCalled = false
+    const originalClose = docker.connection.close.bind(docker.connection)
 
-    docker.connection.agent.destroy = () => {
-      destroyCalled = true
-      originalDestroy()
+    docker.connection.close = () => {
+      closeCalled = true
+      originalClose()
     }
 
     docker.close()
 
-    expect(destroyCalled).toEqual(true)
+    expect(closeCalled).toEqual(true)
   })
 })
