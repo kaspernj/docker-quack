@@ -10,7 +10,8 @@ Docker Engine API client with HTTP keep-alive for Node.js.
 - Container exec with multiplexed stdout/stderr parsing
 - Container log streaming with frame header parsing
 - Container archive upload/download, with gzip-compressed archive uploads by default
-- HTTP response content decoding for gzip, deflate, Brotli, and zstd where supported by Node.js
+- HTTP response compression requested by default, with gzip, deflate, Brotli, and zstd decoding where supported by Node.js
+- Optional HTTP request body compression for endpoints that accept compressed request bodies
 - Container commit retries for transient Docker daemon/containerd failures
 - Image pull with streaming progress and registry authentication
 - TLS client certificate support

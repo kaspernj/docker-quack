@@ -1,1 +1,1 @@
-Gzip Docker archive uploads by default and decode compressed Docker API responses (`gzip`, `deflate`, Brotli, and zstd when supported by Node.js).
+Gzip Docker archive uploads by default, request compressed Docker API responses by default, decode compressed responses (`gzip`, `deflate`, Brotli, and zstd when supported by Node.js), and expose opt-in HTTP request body compression for endpoints that accept compressed request bodies.

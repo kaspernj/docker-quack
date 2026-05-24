@@ -4,6 +4,45 @@ import * as zlib from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import DockerConnection from "../src/docker-connection.js"
 
+const supportedResponseContentEncodings = () => [
+  "gzip",
+  "deflate",
+  "br",
+  ...(typeof zlib.createZstdDecompress === "function" ? ["zstd"] : [])
+]
+const supportedRequestBodyCompressionEncodings = () => [
+  "gzip",
+  "deflate",
+  "br",
+  ...(typeof zlib.createZstdCompress === "function" && typeof zlib.zstdDecompressSync === "function" ? ["zstd"] : [])
+]
+
+const decodeRequestBody = (body, encodingHeader) => {
+  const encoding = Array.isArray(encodingHeader) ? encodingHeader.join(",") : encodingHeader
+
+  if (!encoding || encoding === "identity") {
+    return body
+  }
+
+  if (encoding === "gzip") {
+    return zlib.gunzipSync(body)
+  }
+
+  if (encoding === "deflate") {
+    return zlib.inflateSync(body)
+  }
+
+  if (encoding === "br") {
+    return zlib.brotliDecompressSync(body)
+  }
+
+  if (encoding === "zstd" && typeof zlib.zstdDecompressSync === "function") {
+    return zlib.zstdDecompressSync(body)
+  }
+
+  throw new Error(`Unsupported request body encoding in spec: ${encoding}`)
+}
+
 describe("DockerConnection", () => {
   it("creates an HTTP connection with keep-alive", () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
@@ -131,7 +170,7 @@ describe("DockerConnection", () => {
     try {
       await connection.request({method: "GET", path: "/version"})
 
-      expect(acceptEncoding).toEqual("gzip, deflate, br, zstd")
+      expect(acceptEncoding).toEqual(supportedResponseContentEncodings().join(", "))
     } finally {
       connection.close()
       server.close()
@@ -328,6 +367,75 @@ describe("DockerConnection", () => {
       connection.close()
       server.close()
     }
+  })
+
+  it("compresses request bodies when bodyCompression is set", async () => {
+    const capturedRequests = []
+
+    const server = http.createServer((req, res) => {
+      const chunks = []
+
+      req.on("data", (chunk) => {
+        chunks.push(chunk)
+      })
+      req.on("end", () => {
+        const decodedBody = decodeRequestBody(Buffer.concat(chunks), req.headers["content-encoding"])
+
+        capturedRequests.push({
+          contentEncoding: req.headers["content-encoding"],
+          contentLength: req.headers["content-length"],
+          parsedBody: JSON.parse(decodedBody.toString("utf-8"))
+        })
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({ok: true}))
+      })
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+    const encodings = supportedRequestBodyCompressionEncodings()
+
+    try {
+      for (const encoding of encodings) {
+        const result = await connection.request({
+          method: "POST",
+          path: `/containers/create/${encoding}`,
+          body: {Image: `ubuntu:${encoding}`},
+          bodyCompression: encoding
+        })
+
+        expect(result).toEqual({ok: true})
+      }
+
+      expect(capturedRequests.map((request) => request.contentEncoding)).toEqual(encodings)
+      expect(capturedRequests.map((request) => request.contentLength)).toEqual(encodings.map(() => undefined))
+      expect(capturedRequests.map((request) => request.parsedBody)).toEqual(encodings.map((encoding) => ({Image: `ubuntu:${encoding}`})))
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("does not combine bodyCompression with an explicit Content-Encoding header", async () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
+    let thrownError = null
+
+    try {
+      await connection.request({
+        method: "POST",
+        path: "/containers/create",
+        body: {Image: "ubuntu:24.04"},
+        bodyCompression: "gzip",
+        headers: {"Content-Encoding": "gzip"}
+      })
+    } catch (error) {
+      thrownError = error
+    } finally {
+      connection.close()
+    }
+
+    expect(thrownError?.message).toEqual("Cannot combine bodyCompression with an explicit Content-Encoding header.")
   })
 
   it("handles 404 error responses by throwing with status and message", async () => {
