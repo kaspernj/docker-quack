@@ -60,6 +60,23 @@ class DockerNetworks {
       query
     })
   }
+
+  /**
+   * Prune unused networks.
+   * @param {{filters?: object}} [options]
+   * @returns {Promise<{NetworksDeleted?: string[], SpaceReclaimed?: number}>}
+   */
+  async prune(options = {}) {
+    const query = {}
+
+    if (options.filters) query.filters = JSON.stringify(options.filters)
+
+    return await this.connection.request({
+      method: "POST",
+      path: "/networks/prune",
+      query
+    })
+  }
 }
 
 export default DockerNetworks

@@ -139,4 +139,58 @@ describe("DockerNetworks", () => {
       server.close()
     }
   })
+
+  it("prune() sends POST /networks/prune", async () => {
+    let captured = null
+    const pruneResult = {
+      NetworksDeleted: ["tensorbuzz-build-old"],
+      SpaceReclaimed: 0
+    }
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        jsonResponse(res, 200, pruneResult)
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const result = await docker.networks.prune()
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.url).toEqual("/networks/prune")
+      expect(result.NetworksDeleted).toEqual(["tensorbuzz-build-old"])
+      expect(result.SpaceReclaimed).toEqual(0)
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("prune() sends filters to POST /networks/prune", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        jsonResponse(res, 200, {NetworksDeleted: []})
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.networks.prune({filters: {until: ["10m"]}})
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.url).toEqual("/networks/prune?filters=%7B%22until%22%3A%5B%2210m%22%5D%7D")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
 })
