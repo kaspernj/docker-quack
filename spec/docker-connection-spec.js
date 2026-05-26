@@ -157,6 +157,24 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("times out a buffered request when the host accepts the connection but never responds", async () => {
+    const server = http.createServer(() => {
+      // Intentionally never respond, simulating an unreachable/wedged daemon.
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port, timeoutMs: 100})
+
+    try {
+      await expect(async () => await connection.request({method: "GET", path: "/_ping"}))
+        .toThrow("Docker request timed out after 100ms: GET /_ping")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
   it("requests supported response content encodings by default", async () => {
     let acceptEncoding = null
 

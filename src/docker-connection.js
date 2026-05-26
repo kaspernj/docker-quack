@@ -21,6 +21,7 @@ import SnapReq from "snapreq"
  * @property {number} port - Docker port
  * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {TlsOptions} [tls] - TLS options for HTTPS connections
+ * @property {number} [timeoutMs] - Per-request timeout for buffered (non-streaming) requests. An unreachable host that accepts the connection but never responds would otherwise hang forever. Defaults to 120000ms. Set to 0 to disable.
  */
 
 /**
@@ -37,6 +38,7 @@ import SnapReq from "snapreq"
  * @property {object} [headers] - Additional headers
  * @property {AbortSignal} [signal] - Optional abort signal for streaming requests
  * @property {boolean | RetryOptions} [retry] - Retry transient Docker API or connection failures
+ * @property {number} [timeoutMs] - Overrides the connection's default per-request timeout for this buffered request. Set to 0 to disable.
  */
 
 /**
@@ -48,6 +50,7 @@ import SnapReq from "snapreq"
 const RETRYABLE_ERROR_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENOENT", "ETIMEDOUT", "EPIPE"])
 const RETRYABLE_DOCKER_API_STATUS_CODES = new Set([502, 503, 504])
 const DEFAULT_ACCEPT_ENCODING = ["gzip", "deflate", "br", ...(typeof zlib.createZstdDecompress === "function" ? ["zstd"] : [])].join(", ")
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
 /** Docker Engine API error with status metadata. */
 export class DockerApiError extends Error {
@@ -61,6 +64,20 @@ export class DockerApiError extends Error {
     this.path = options.path
     this.responseMessage = options.responseMessage
     this.statusCode = options.statusCode
+  }
+}
+
+/** Thrown when a buffered Docker request exceeds its configured timeout. */
+export class DockerConnectionTimeoutError extends Error {
+  /**
+   * @param {{message: string, method: string, path: string, timeoutMs: number}} options
+   */
+  constructor(options) {
+    super(options.message)
+    this.name = "DockerConnectionTimeoutError"
+    this.method = options.method
+    this.path = options.path
+    this.timeoutMs = options.timeoutMs
   }
 }
 
@@ -81,6 +98,7 @@ class DockerConnection {
     this.socketPath = options.socketPath
     this.tls = options.tls
     this.useTls = !!options.tls
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
 
     const protocol = this.useTls ? "https" : "http"
     // Bracket IPv6 literals (for example `::1`) so the composed URL is valid;
@@ -174,20 +192,59 @@ class DockerConnection {
    */
   async requestRawOnce(options) {
     const fullPath = this.buildPath(options.path, options.query)
-    const response = await this.client.request({
-      method: options.method,
-      path: fullPath,
-      body: options.body,
-      bodyCompression: options.bodyCompression,
-      headers: this.requestHeaders(options.headers),
-      signal: options.signal
-    })
+    const timeoutMs = options.timeoutMs ?? this.timeoutMs
+    const timeoutController = timeoutMs && timeoutMs > 0 ? new AbortController() : null
+    let timedOut = false
+    const timer = timeoutController
+      ? setTimeout(() => {
+        timedOut = true
+        timeoutController.abort()
+      }, timeoutMs)
+      : null
 
-    if (response.status >= 400) {
-      throw this.apiError(response, options.method, fullPath, await response.buffer())
+    try {
+      const response = await this.client.request({
+        method: options.method,
+        path: fullPath,
+        body: options.body,
+        bodyCompression: options.bodyCompression,
+        headers: this.requestHeaders(options.headers),
+        signal: this.composeSignal(options.signal, timeoutController?.signal)
+      })
+
+      if (response.status >= 400) {
+        throw this.apiError(response, options.method, fullPath, await response.buffer())
+      }
+
+      return await response.buffer()
+    } catch (error) {
+      if (timedOut) {
+        throw new DockerConnectionTimeoutError({
+          message: `Docker request timed out after ${timeoutMs}ms: ${options.method} ${fullPath}`,
+          method: options.method,
+          path: fullPath,
+          timeoutMs
+        })
+      }
+
+      throw error
+    } finally {
+      if (timer) clearTimeout(timer)
     }
+  }
 
-    return await response.buffer()
+  /**
+   * Combines an optional caller-supplied abort signal with our timeout signal
+   * so the request aborts when either fires.
+   * @param {AbortSignal} [callerSignal]
+   * @param {AbortSignal} [timeoutSignal]
+   * @returns {AbortSignal | undefined}
+   */
+  composeSignal(callerSignal, timeoutSignal) {
+    if (!timeoutSignal) return callerSignal
+    if (!callerSignal) return timeoutSignal
+
+    return AbortSignal.any([callerSignal, timeoutSignal])
   }
 
   /**
