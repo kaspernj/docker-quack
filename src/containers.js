@@ -76,7 +76,9 @@ class DockerContainers {
 
   /**
    * Stop a container.
-   * @param {{id: string, t?: number}} options
+   * @param {{id: string, t?: number, timeoutMs?: number}} options - `t` is the
+   *   graceful-stop grace period in seconds; `timeoutMs` overrides the derived
+   *   per-request timeout.
    * @returns {Promise<void>}
    */
   async stop(options) {
@@ -85,8 +87,26 @@ class DockerContainers {
     await this.connection.requestRaw({
       method: "POST",
       path: `/containers/${options.id}/stop`,
-      query
+      query,
+      timeoutMs: this.stopRequestTimeoutMs(options)
     })
+  }
+
+  /**
+   * Docker waits up to `t` seconds for a graceful stop before sending SIGKILL, so
+   * the request can legitimately run that long. The connection's default
+   * per-request timeout would cut a long grace period short, so give the request
+   * the grace period plus the default timeout as headroom. An explicit `timeoutMs`
+   * wins; with no grace period (or when timeouts are disabled) the connection
+   * default applies.
+   * @param {{t?: number, timeoutMs?: number}} options
+   * @returns {number}
+   */
+  stopRequestTimeoutMs(options) {
+    if (options.timeoutMs !== undefined) return options.timeoutMs
+    if (options.t === undefined || !this.connection.timeoutMs) return this.connection.timeoutMs
+
+    return options.t * 1000 + this.connection.timeoutMs
   }
 
   /**

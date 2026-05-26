@@ -324,6 +324,13 @@ class DockerConnection {
       return this.retryableDockerApiError(error)
     }
 
+    // A timed-out buffered request is a stalled connection in practice, so when
+    // the caller opted into retries it should be retried like other transient
+    // connection failures rather than failing outright on the first stall.
+    if (error instanceof DockerConnectionTimeoutError) {
+      return true
+    }
+
     if (!error || typeof error !== "object") {
       return false
     }
