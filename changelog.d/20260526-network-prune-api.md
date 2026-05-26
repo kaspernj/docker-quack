@@ -1,1 +1,1 @@
-- Add `docker.networks.prune()` for Docker Engine network prune requests, including filter support.
+- Add Docker prune helpers for containers, images, networks, and volumes, including filter support.

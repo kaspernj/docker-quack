@@ -335,6 +335,60 @@ describe("DockerContainers", () => {
     }
   })
 
+  it("prune() sends POST /containers/prune", async () => {
+    let captured = null
+    const pruneResult = {
+      ContainersDeleted: ["container-abc123"],
+      SpaceReclaimed: 2048
+    }
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        jsonResponse(res, 200, pruneResult)
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const result = await docker.containers.prune()
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.url).toEqual("/containers/prune")
+      expect(result.ContainersDeleted).toEqual(["container-abc123"])
+      expect(result.SpaceReclaimed).toEqual(2048)
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("prune() sends filters to POST /containers/prune", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        jsonResponse(res, 200, {ContainersDeleted: []})
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.containers.prune({filters: {label: ["tensorbuzz=cleanup"]}})
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.url).toEqual("/containers/prune?filters=%7B%22label%22%3A%5B%22tensorbuzz%3Dcleanup%22%5D%7D")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
   it("stats() sends GET /containers/{id}/stats?stream=false", async () => {
     let captured = null
     const statsData = {cpu_stats: {cpu_usage: {total_usage: 1000}}, memory_stats: {usage: 2048}}

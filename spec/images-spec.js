@@ -169,6 +169,62 @@ describe("DockerImages", () => {
     }
   })
 
+  it("prune() sends POST /images/prune", async () => {
+    let captured = null
+    const pruneResult = {
+      ImagesDeleted: [{Deleted: "sha256:abc"}],
+      SpaceReclaimed: 4096
+    }
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify(pruneResult))
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const result = await docker.images.prune()
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.url).toEqual("/images/prune")
+      expect(result.ImagesDeleted).toEqual([{Deleted: "sha256:abc"}])
+      expect(result.SpaceReclaimed).toEqual(4096)
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("prune() sends filters to POST /images/prune", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(200, {"Content-Type": "application/json"})
+        res.end(JSON.stringify({ImagesDeleted: []}))
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.images.prune({filters: {dangling: ["false"]}})
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.url).toEqual("/images/prune?filters=%7B%22dangling%22%3A%5B%22false%22%5D%7D")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
   it("pull() with onProgress streams progress objects", async () => {
     const progress1 = {status: "Pulling fs layer", id: "abc123"}
     const progress2 = {status: "Downloading", progressDetail: {current: 1024, total: 4096}, id: "abc123"}

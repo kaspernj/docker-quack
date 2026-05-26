@@ -87,6 +87,23 @@ class DockerImages {
   }
 
   /**
+   * Prune unused images.
+   * @param {{filters?: object}} [options]
+   * @returns {Promise<{ImagesDeleted?: Array<{Deleted?: string, Untagged?: string}>, SpaceReclaimed?: number}>}
+   */
+  async prune(options = {}) {
+    const query = {}
+
+    if (options.filters) query.filters = JSON.stringify(options.filters)
+
+    return await this.connection.request({
+      method: "POST",
+      path: "/images/prune",
+      query
+    })
+  }
+
+  /**
    * Consume the pull progress stream. Docker streams newline-delimited JSON objects
    * with progress info. If any object contains an error field, throw it.
    * When onProgress is provided, each parsed JSON object is forwarded live.

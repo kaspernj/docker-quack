@@ -63,6 +63,23 @@ class DockerVolumes {
       query
     })
   }
+
+  /**
+   * Prune unused volumes.
+   * @param {{filters?: object}} [options]
+   * @returns {Promise<{VolumesDeleted?: string[], SpaceReclaimed?: number}>}
+   */
+  async prune(options = {}) {
+    const query = {}
+
+    if (options.filters) query.filters = JSON.stringify(options.filters)
+
+    return await this.connection.request({
+      method: "POST",
+      path: "/volumes/prune",
+      query
+    })
+  }
 }
 
 export default DockerVolumes

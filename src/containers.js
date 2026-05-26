@@ -291,6 +291,23 @@ class DockerContainers {
   }
 
   /**
+   * Prune stopped containers.
+   * @param {{filters?: object}} [options]
+   * @returns {Promise<{ContainersDeleted?: string[], SpaceReclaimed?: number}>}
+   */
+  async prune(options = {}) {
+    const query = {}
+
+    if (options.filters) query.filters = JSON.stringify(options.filters)
+
+    return await this.connection.request({
+      method: "POST",
+      path: "/containers/prune",
+      query
+    })
+  }
+
+  /**
    * Get one-shot container stats (no streaming).
    * @param {{id: string}} options
    * @returns {Promise<object>}
