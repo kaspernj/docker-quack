@@ -157,6 +157,52 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("times out a buffered request when the host accepts the connection but never responds", async () => {
+    const server = http.createServer(() => {
+      // Intentionally never respond, simulating an unreachable/wedged daemon.
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port, timeoutMs: 100})
+
+    try {
+      await expect(async () => await connection.request({method: "GET", path: "/_ping"}))
+        .toThrow("Docker request timed out after 100ms: GET /_ping")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("retries a timed-out buffered request when retry is enabled", async () => {
+    let attempts = 0
+
+    const server = http.createServer((req, res) => {
+      attempts += 1
+
+      // First attempt never responds (stalled connection); the retry succeeds.
+      if (attempts === 1) return
+
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({Id: "sha256:timeout-retry-success"}))
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port, timeoutMs: 100})
+
+    try {
+      const result = await connection.request({method: "POST", path: "/commit", retry: {tries: 2, waitMs: 1}})
+
+      expect(attempts).toEqual(2)
+      expect(result.Id).toEqual("sha256:timeout-retry-success")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
   it("requests supported response content encodings by default", async () => {
     let acceptEncoding = null
 

@@ -112,6 +112,32 @@ describe("DockerContainers", () => {
     }
   })
 
+  it("stop() derives a per-request timeout with headroom above the grace period", () => {
+    const docker = Docker.open({host: "127.0.0.1", port: 2375, timeoutMs: 120_000})
+
+    try {
+      // No grace period falls back to the connection's default timeout.
+      expect(docker.containers.stopRequestTimeoutMs({})).toEqual(120_000)
+      // A grace period longer than the default is not cut short: it gets the
+      // grace period plus the default as headroom.
+      expect(docker.containers.stopRequestTimeoutMs({t: 300})).toEqual(300 * 1000 + 120_000)
+      // An explicit timeoutMs override wins.
+      expect(docker.containers.stopRequestTimeoutMs({t: 300, timeoutMs: 5_000})).toEqual(5_000)
+    } finally {
+      docker.close()
+    }
+  })
+
+  it("stop() keeps timeouts disabled when the connection disables them", () => {
+    const docker = Docker.open({host: "127.0.0.1", port: 2375, timeoutMs: 0})
+
+    try {
+      expect(docker.containers.stopRequestTimeoutMs({t: 300})).toEqual(0)
+    } finally {
+      docker.close()
+    }
+  })
+
   it("remove() sends DELETE /containers/{id}", async () => {
     let captured = null
 
