@@ -42,6 +42,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} id - Container ID
  * @property {string} [repo] - Optional image repository to tag after the commit
  * @property {string} [tag] - Optional image tag. Defaults to `latest` when `repo` is provided.
+ * @property {number} [timeoutMs] - Optional per-request timeout for the commit request.
  */
 
 /** Docker containers API. */
@@ -232,7 +233,8 @@ class DockerContainers {
       method: "POST",
       path: "/commit",
       query: {container: options.id},
-      retry: true
+      retry: true,
+      timeoutMs: options.timeoutMs
     })
 
     if (options.repo) {

@@ -2,6 +2,7 @@ import http from "node:http"
 import {gunzipSync} from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import Docker from "../src/index.js"
+import DockerContainers from "../src/containers.js"
 
 function createMockServer(handler) {
   return new Promise((resolve) => {
@@ -282,6 +283,41 @@ describe("DockerContainers", () => {
       docker.close()
       server.close()
     }
+  })
+
+  it("commit() forwards a per-request timeout to the commit request", async () => {
+    const requests = []
+    const containers = new DockerContainers({
+      async request(options) {
+        requests.push(options)
+
+        if (options.path === "/commit") {
+          return {Id: "sha256:committed-with-timeout"}
+        }
+
+        return {}
+      }
+    })
+
+    await containers.commit({
+      id: "abc123",
+      repo: "my-repo",
+      tag: "latest",
+      timeoutMs: 300_000
+    })
+
+    expect(requests[0]).toEqual({
+      method: "POST",
+      path: "/commit",
+      query: {container: "abc123"},
+      retry: true,
+      timeoutMs: 300_000
+    })
+    expect(requests[1]).toEqual({
+      method: "POST",
+      path: "/images/sha256%3Acommitted-with-timeout/tag",
+      query: {repo: "my-repo", tag: "latest"}
+    })
   })
 
   it("putArchive() gzips archive uploads by default", async () => {
