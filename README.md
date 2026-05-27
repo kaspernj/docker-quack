@@ -103,8 +103,8 @@ const stats = await docker.containers.stats({id: Id})
 const containers = await docker.containers.list()
 const allContainers = await docker.containers.list({all: true})
 
-// Commit to image
-await docker.containers.commit({id: Id, repo: "my-repo", tag: "latest"})
+// Commit to image. timeoutMs overrides the connection timeout for this long-running request.
+await docker.containers.commit({id: Id, repo: "my-repo", tag: "latest", timeoutMs: 300000})
 
 // Archive upload/download. putArchive gzips the uploaded tar by default.
 await docker.containers.putArchive({id: Id, path: "/tmp", archive: tarBuffer})
