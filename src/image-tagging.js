@@ -60,7 +60,14 @@ export default class DockerImageTagger {
    * @returns {boolean}
    */
   isImageReferenceAlreadyExistsError(error) {
-    return error instanceof Error && error.message.toLowerCase().includes("already exists")
+    if (!(error instanceof Error)) {
+      return false
+    }
+
+    const message = error.message.toLowerCase()
+
+    return message.includes("already exists") ||
+      (message.includes("is already set to image") && message.includes("use -f option"))
   }
 
   /**

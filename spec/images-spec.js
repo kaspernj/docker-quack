@@ -215,7 +215,7 @@ describe("DockerImages", () => {
           tagAttempts += 1
 
           if (tagAttempts === 1) {
-            jsonResponse(res, 409, {message: "image already exists"})
+            jsonResponse(res, 409, {message: "Tag my-repo:latest is already set to image sha256:old-image, if you want to replace it, please use -f option"})
           } else {
             res.writeHead(201)
             res.end()
