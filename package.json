@@ -22,6 +22,6 @@
     "velocious": "^1.0.343"
   },
   "dependencies": {
-    "snapreq": "github:kaspernj/snapreq#93f224fd8eaaa5fca0aca6b9ec5c41e32a9d735b"
+    "snapreq": "^0.0.4"
   }
 }
