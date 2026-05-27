@@ -215,13 +215,19 @@ describe("DockerContainers", () => {
     }
   })
 
-  it("commit() sends POST /commit with container, repo, tag query params", async () => {
-    let captured = null
+  it("commit() commits anonymously and tags the returned image ID", async () => {
+    const requests = []
 
     const server = await createMockServer((req, res) => {
       captureRequest(req, (data) => {
-        captured = data
-        jsonResponse(res, 201, {Id: "sha256:newimage123"})
+        requests.push(data)
+
+        if (data.url === "/commit?container=abc123") {
+          jsonResponse(res, 201, {Id: "sha256:newimage123"})
+        } else {
+          res.writeHead(201)
+          res.end()
+        }
       })
     })
 
@@ -231,8 +237,10 @@ describe("DockerContainers", () => {
     try {
       const result = await docker.containers.commit({id: "abc123", repo: "my-repo", tag: "latest"})
 
-      expect(captured.method).toEqual("POST")
-      expect(captured.url).toEqual("/commit?container=abc123&repo=my-repo&tag=latest")
+      expect(requests.map((request) => [request.method, request.url])).toEqual([
+        ["POST", "/commit?container=abc123"],
+        ["POST", "/images/sha256%3Anewimage123/tag?repo=my-repo&tag=latest"]
+      ])
       expect(result.Id).toEqual("sha256:newimage123")
     } finally {
       docker.close()
@@ -247,10 +255,13 @@ describe("DockerContainers", () => {
       captureRequest(req, (data) => {
         requests.push(data)
 
-        if (requests.length === 1) {
+        if (data.url === "/commit?container=abc123" && requests.length === 1) {
           jsonResponse(res, 500, {message: "failed to export layer: CreateDiff: failed to commit: no such file or directory"})
-        } else {
+        } else if (data.url === "/commit?container=abc123") {
           jsonResponse(res, 201, {Id: "sha256:committed-after-retry"})
+        } else {
+          res.writeHead(201)
+          res.end()
         }
       })
     })
@@ -261,9 +272,11 @@ describe("DockerContainers", () => {
     try {
       const result = await docker.containers.commit({id: "abc123", repo: "my-repo", tag: "latest"})
 
-      expect(requests.length).toEqual(2)
-      expect(requests[0].url).toEqual("/commit?container=abc123&repo=my-repo&tag=latest")
-      expect(requests[1].url).toEqual("/commit?container=abc123&repo=my-repo&tag=latest")
+      expect(requests.map((request) => request.url)).toEqual([
+        "/commit?container=abc123",
+        "/commit?container=abc123",
+        "/images/sha256%3Acommitted-after-retry/tag?repo=my-repo&tag=latest"
+      ])
       expect(result.Id).toEqual("sha256:committed-after-retry")
     } finally {
       docker.close()
