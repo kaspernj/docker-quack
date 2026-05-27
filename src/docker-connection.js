@@ -1,5 +1,6 @@
 import * as zlib from "node:zlib"
 import SnapReq from "snapreq"
+import {SnapReqTimeoutError} from "snapreq/errors"
 
 /**
  * @typedef {object} TlsOptions
@@ -193,14 +194,6 @@ class DockerConnection {
   async requestRawOnce(options) {
     const fullPath = this.buildPath(options.path, options.query)
     const timeoutMs = options.timeoutMs ?? this.timeoutMs
-    const timeoutController = timeoutMs && timeoutMs > 0 ? new AbortController() : null
-    let timedOut = false
-    const timer = timeoutController
-      ? setTimeout(() => {
-        timedOut = true
-        timeoutController.abort()
-      }, timeoutMs)
-      : null
 
     try {
       const response = await this.client.request({
@@ -209,7 +202,8 @@ class DockerConnection {
         body: options.body,
         bodyCompression: options.bodyCompression,
         headers: this.requestHeaders(options.headers),
-        signal: this.composeSignal(options.signal, timeoutController?.signal)
+        signal: options.signal,
+        timeoutMs
       })
 
       if (response.status >= 400) {
@@ -218,7 +212,7 @@ class DockerConnection {
 
       return await response.buffer()
     } catch (error) {
-      if (timedOut) {
+      if (error instanceof SnapReqTimeoutError) {
         throw new DockerConnectionTimeoutError({
           message: `Docker request timed out after ${timeoutMs}ms: ${options.method} ${fullPath}`,
           method: options.method,
@@ -228,23 +222,7 @@ class DockerConnection {
       }
 
       throw error
-    } finally {
-      if (timer) clearTimeout(timer)
     }
-  }
-
-  /**
-   * Combines an optional caller-supplied abort signal with our timeout signal
-   * so the request aborts when either fires.
-   * @param {AbortSignal} [callerSignal]
-   * @param {AbortSignal} [timeoutSignal]
-   * @returns {AbortSignal | undefined}
-   */
-  composeSignal(callerSignal, timeoutSignal) {
-    if (!timeoutSignal) return callerSignal
-    if (!callerSignal) return timeoutSignal
-
-    return AbortSignal.any([callerSignal, timeoutSignal])
   }
 
   /**
