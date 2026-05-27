@@ -10,6 +10,7 @@ import DockerVolumes from "./volumes.js"
  * @property {number} port - Docker port
  * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {import("./docker-connection.js").TlsOptions} [tls] - TLS options for HTTPS connections
+ * @property {number} [timeoutMs] - Per-request timeout for buffered Docker API requests
  */
 
 /** Docker Engine API client with HTTP keep-alive connections. */

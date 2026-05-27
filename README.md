@@ -15,6 +15,7 @@ Docker Engine API client with HTTP keep-alive for Node.js.
 - Container commit retries for transient Docker daemon/containerd failures
 - Image pull with streaming progress and registry authentication
 - TLS client certificate support
+- Configurable timeouts for buffered Docker API requests
 
 ## Installation
 
@@ -39,6 +40,15 @@ const docker = Docker.open({
   port: 2376,
   tls: {ca: caCert, cert: clientCert, key: clientKey}
 })
+```
+
+### Timeouts
+
+Buffered Docker API requests default to a 120000ms timeout. Override it on the connection or on a single request; use `0` to disable a timeout. Streaming requests are left untimed so logs, pulls and exec streams can stay open.
+
+```js
+const docker = Docker.open({host: "127.0.0.1", port: 2375, timeoutMs: 30000})
+const version = await docker.connection.request({method: "GET", path: "/version", timeoutMs: 5000})
 ```
 
 ### System info

@@ -175,6 +175,25 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("times out while buffering a response body", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.write("{")
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port, timeoutMs: 100})
+
+    try {
+      await expect(async () => await connection.request({method: "GET", path: "/version"}))
+        .toThrow("Docker request timed out after 100ms: GET /version")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
   it("retries a timed-out buffered request when retry is enabled", async () => {
     let attempts = 0
 
