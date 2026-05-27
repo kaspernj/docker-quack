@@ -1,8 +1,17 @@
+import DockerImageTagger from "./image-tagging.js"
+
 /**
  * @typedef {object} PullOptions
  * @property {string} image - Image name with optional tag (e.g. "postgres:16")
  * @property {{username: string, password: string, serveraddress?: string}} [auth] - Registry authentication
  * @property {(progress: object) => void} [onProgress] - Called with each progress object as it arrives
+ */
+
+/**
+ * @typedef {object} TagOptions
+ * @property {string} source - Existing image name, tag, ID, or digest to tag
+ * @property {string} repo - Target image repository
+ * @property {string} [tag] - Target image tag. Defaults to `latest`.
  */
 
 /** Docker images API. */
@@ -12,6 +21,7 @@ class DockerImages {
    */
   constructor(connection) {
     this.connection = connection
+    this.imageTagger = new DockerImageTagger(connection)
   }
 
   /**
@@ -66,6 +76,20 @@ class DockerImages {
       method: "DELETE",
       path: `/images/${options.name}`,
       query
+    })
+  }
+
+  /**
+   * Tag an image. If Docker reports the target already exists, this verifies
+   * whether it already points at the source image and otherwise retags it.
+   * @param {TagOptions} options
+   * @returns {Promise<void>}
+   */
+  async tag(options) {
+    await this.imageTagger.tag({
+      source: options.source,
+      repo: options.repo,
+      tag: options.tag
     })
   }
 

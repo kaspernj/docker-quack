@@ -13,7 +13,9 @@ Docker Engine API client with HTTP keep-alive for Node.js.
 - HTTP response compression requested by default, with gzip, deflate, Brotli, and zstd decoding where supported by Node.js
 - Optional HTTP request body compression for endpoints that accept compressed request bodies
 - Container commit retries for transient Docker daemon/containerd failures
+- Container commits retag returned image IDs instead of relying on Docker's direct commit-to-tag path
 - Image pull with streaming progress and registry authentication
+- Image tagging handles existing destination tags idempotently
 - TLS client certificate support
 - Configurable timeouts for buffered Docker API requests
 
@@ -137,6 +139,9 @@ await docker.images.pull({
 
 // Inspect
 const image = await docker.images.inspect({name: "alpine:3.21"})
+
+// Tag
+await docker.images.tag({source: image.Id, repo: "my-repo", tag: "latest"})
 
 // List
 const images = await docker.images.list()

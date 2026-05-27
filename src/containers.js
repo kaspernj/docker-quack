@@ -1,5 +1,6 @@
 import {Readable} from "node:stream"
 import {createGzip} from "node:zlib"
+import DockerImageTagger from "./image-tagging.js"
 
 /**
  * @typedef {object} CreateContainerOptions
@@ -36,6 +37,13 @@ import {createGzip} from "node:zlib"
  * @property {string} stderr - Standard error
  */
 
+/**
+ * @typedef {object} CommitOptions
+ * @property {string} id - Container ID
+ * @property {string} [repo] - Optional image repository to tag after the commit
+ * @property {string} [tag] - Optional image tag. Defaults to `latest` when `repo` is provided.
+ */
+
 /** Docker containers API. */
 class DockerContainers {
   /**
@@ -43,6 +51,7 @@ class DockerContainers {
    */
   constructor(connection) {
     this.connection = connection
+    this.imageTagger = new DockerImageTagger(connection)
   }
 
   /**
@@ -212,23 +221,29 @@ class DockerContainers {
 
   /**
    * Commit a container to create a new image.
-   * @param {{id: string, repo: string, tag?: string}} options
+   * Commits anonymously first and then tags the returned immutable image ID so
+   * Docker versions that reject `/commit?repo=...&tag=...` for existing target
+   * tags still behave like `docker commit && docker tag`.
+   * @param {CommitOptions} options
    * @returns {Promise<{Id: string}>}
    */
   async commit(options) {
-    const query = {
-      container: options.id,
-      repo: options.repo
-    }
-
-    if (options.tag) query.tag = options.tag
-
-    return await this.connection.request({
+    const result = await this.connection.request({
       method: "POST",
       path: "/commit",
-      query,
+      query: {container: options.id},
       retry: true
     })
+
+    if (options.repo) {
+      await this.imageTagger.tag({
+        source: this.imageTagger.imageIdFromResponse(result, options.id),
+        repo: options.repo,
+        tag: options.tag
+      })
+    }
+
+    return result
   }
 
   /**

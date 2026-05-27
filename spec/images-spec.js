@@ -26,6 +26,11 @@ function captureRequest(req, callback) {
   })
 }
 
+function jsonResponse(res, statusCode, body) {
+  res.writeHead(statusCode, {"Content-Type": "application/json"})
+  res.end(JSON.stringify(body))
+}
+
 describe("DockerImages", () => {
   it("pull() sends POST /images/create with fromImage query param", async () => {
     let captured = null
@@ -135,6 +140,116 @@ describe("DockerImages", () => {
       expect(captured.url).toEqual("/images/ubuntu:24.04")
       expect(result.length).toEqual(2)
       expect(result[0].Untagged).toEqual("ubuntu:24.04")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("tag() sends POST /images/{source}/tag with repo and tag query params", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        res.writeHead(201)
+        res.end()
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.images.tag({source: "sha256:abc123", repo: "my-repo", tag: "latest"})
+
+      expect(captured.method).toEqual("POST")
+      expect(captured.url).toEqual("/images/sha256%3Aabc123/tag?repo=my-repo&tag=latest")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("tag() treats an existing target tag as success when it already points at the source image", async () => {
+    const requests = []
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        requests.push(data)
+
+        if (data.method === "POST") {
+          jsonResponse(res, 409, {message: "image already exists"})
+        } else {
+          jsonResponse(res, 200, {Id: "sha256:same-image"})
+        }
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.images.tag({source: "sha256:same-image", repo: "my-repo", tag: "latest"})
+
+      expect(requests.map((request) => [request.method, request.url])).toEqual([
+        ["POST", "/images/sha256%3Asame-image/tag?repo=my-repo&tag=latest"],
+        ["GET", "/images/sha256:same-image/json"],
+        ["GET", "/images/my-repo:latest/json"]
+      ])
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("tag() replaces an existing target tag when it points at a different image", async () => {
+    const requests = []
+    let tagAttempts = 0
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        requests.push(data)
+
+        if (data.method === "POST" && data.url === "/images/sha256%3Anew-image/tag?repo=my-repo&tag=latest") {
+          tagAttempts += 1
+
+          if (tagAttempts === 1) {
+            jsonResponse(res, 409, {message: "Tag my-repo:latest is already set to image sha256:old-image, if you want to replace it, please use -f option"})
+          } else {
+            res.writeHead(201)
+            res.end()
+          }
+
+          return
+        }
+
+        if (data.url === "/images/sha256:new-image/json") {
+          jsonResponse(res, 200, {Id: "sha256:new-image"})
+        } else if (data.url === "/images/my-repo:latest/json") {
+          jsonResponse(res, 200, {Id: "sha256:old-image"})
+        } else if (data.url === "/images/my-repo:latest?force=true") {
+          jsonResponse(res, 200, [{Untagged: "my-repo:latest"}])
+        } else {
+          jsonResponse(res, 500, {message: `Unexpected request: ${data.method} ${data.url}`})
+        }
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.images.tag({source: "sha256:new-image", repo: "my-repo", tag: "latest"})
+
+      expect(tagAttempts).toEqual(2)
+      expect(requests.map((request) => [request.method, request.url])).toEqual([
+        ["POST", "/images/sha256%3Anew-image/tag?repo=my-repo&tag=latest"],
+        ["GET", "/images/sha256:new-image/json"],
+        ["GET", "/images/my-repo:latest/json"],
+        ["DELETE", "/images/my-repo:latest?force=true"],
+        ["POST", "/images/sha256%3Anew-image/tag?repo=my-repo&tag=latest"]
+      ])
     } finally {
       docker.close()
       server.close()
