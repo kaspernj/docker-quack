@@ -340,6 +340,22 @@ describe("DockerImages", () => {
     }
   })
 
+  it("prune() accepts a per-request timeout", async () => {
+    const server = await createMockServer(() => {
+      // Intentionally never respond so the prune request uses its override.
+    })
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port, timeoutMs: 120_000})
+
+    try {
+      await expect(async () => await docker.images.prune({timeoutMs: 50}))
+        .toThrow("Docker request timed out after 50ms: POST /images/prune")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
   it("pull() with onProgress streams progress objects", async () => {
     const progress1 = {status: "Pulling fs layer", id: "abc123"}
     const progress2 = {status: "Downloading", progressDetail: {current: 1024, total: 4096}, id: "abc123"}

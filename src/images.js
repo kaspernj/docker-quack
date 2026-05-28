@@ -112,7 +112,7 @@ class DockerImages {
 
   /**
    * Prune unused images.
-   * @param {{filters?: object}} [options]
+   * @param {{filters?: object, timeoutMs?: number}} [options]
    * @returns {Promise<{ImagesDeleted?: Array<{Deleted?: string, Untagged?: string}>, SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
@@ -123,7 +123,8 @@ class DockerImages {
     return await this.connection.request({
       method: "POST",
       path: "/images/prune",
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 
