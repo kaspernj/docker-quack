@@ -195,4 +195,20 @@ describe("DockerVolumes", () => {
       server.close()
     }
   })
+
+  it("prune() accepts a per-request timeout", async () => {
+    const server = await createMockServer(() => {
+      // Intentionally never respond so the prune request uses its override.
+    })
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port, timeoutMs: 120_000})
+
+    try {
+      await expect(async () => await docker.volumes.prune({timeoutMs: 50}))
+        .toThrow("Docker request timed out after 50ms: POST /volumes/prune")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
 })

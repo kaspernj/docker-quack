@@ -329,7 +329,7 @@ class DockerContainers {
 
   /**
    * Prune stopped containers.
-   * @param {{filters?: object}} [options]
+   * @param {{filters?: object, timeoutMs?: number}} [options]
    * @returns {Promise<{ContainersDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
@@ -340,7 +340,8 @@ class DockerContainers {
     return await this.connection.request({
       method: "POST",
       path: "/containers/prune",
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 

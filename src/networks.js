@@ -63,7 +63,7 @@ class DockerNetworks {
 
   /**
    * Prune unused networks.
-   * @param {{filters?: object}} [options]
+   * @param {{filters?: object, timeoutMs?: number}} [options]
    * @returns {Promise<{NetworksDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
@@ -74,7 +74,8 @@ class DockerNetworks {
     return await this.connection.request({
       method: "POST",
       path: "/networks/prune",
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 }

@@ -66,7 +66,7 @@ class DockerVolumes {
 
   /**
    * Prune unused volumes.
-   * @param {{filters?: object}} [options]
+   * @param {{filters?: object, timeoutMs?: number}} [options]
    * @returns {Promise<{VolumesDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
@@ -77,7 +77,8 @@ class DockerVolumes {
     return await this.connection.request({
       method: "POST",
       path: "/volumes/prune",
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 }

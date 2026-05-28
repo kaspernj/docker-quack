@@ -115,6 +115,9 @@ const tar = await docker.containers.getArchive({id: Id, path: "/etc/hostname"})
 await docker.containers.stop({id: Id})
 await docker.containers.remove({id: Id})
 await docker.containers.remove({id: Id, force: true})
+
+// Prune stopped containers. timeoutMs overrides the connection timeout for long-running prune requests.
+await docker.containers.prune({timeoutMs: 300000})
 ```
 
 ### Images
@@ -148,6 +151,9 @@ const images = await docker.images.list()
 
 // Remove
 await docker.images.remove({name: "alpine:3.21"})
+
+// Prune unused images. timeoutMs overrides the connection timeout for long-running prune requests.
+await docker.images.prune({filters: {dangling: ["false"]}, timeoutMs: 300000})
 ```
 
 ### Networks
@@ -164,6 +170,9 @@ const networks = await docker.networks.list()
 
 // Remove
 await docker.networks.remove({id: Id})
+
+// Prune unused networks. timeoutMs overrides the connection timeout for long-running prune requests.
+await docker.networks.prune({timeoutMs: 300000})
 ```
 
 ### Volumes
@@ -180,6 +189,9 @@ const {Volumes} = await docker.volumes.list()
 
 // Remove
 await docker.volumes.remove({name: "my-volume"})
+
+// Prune unused volumes. timeoutMs overrides the connection timeout for long-running prune requests.
+await docker.volumes.prune({timeoutMs: 300000})
 ```
 
 ### Closing
