@@ -9,44 +9,49 @@ class DockerNetworks {
 
   /**
    * Create a network.
-   * @param {{Name: string, Driver?: string, IPAM?: object}} options
+   * @param {{Name: string, Driver?: string, IPAM?: object, timeoutMs?: number}} options
    * @returns {Promise<{Id: string}>}
    */
   async create(options) {
+    const {timeoutMs, ...body} = options
+
     return await this.connection.request({
       method: "POST",
       path: "/networks/create",
-      body: options
+      body,
+      timeoutMs
     })
   }
 
   /**
    * Remove a network.
-   * @param {{id: string}} options
+   * @param {{id: string, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async remove(options) {
     await this.connection.requestRaw({
       method: "DELETE",
-      path: `/networks/${options.id}`
+      path: `/networks/${options.id}`,
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Inspect a network.
-   * @param {{id: string}} options
+   * @param {{id: string, timeoutMs?: number}} options
    * @returns {Promise<object>}
    */
   async inspect(options) {
     return await this.connection.request({
       method: "GET",
-      path: `/networks/${options.id}`
+      path: `/networks/${options.id}`,
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * List networks.
-   * @param {{filters?: object}} [options]
+   * @param {{filters?: object, timeoutMs?: number}} [options]
    * @returns {Promise<object[]>}
    */
   async list(options = {}) {
@@ -57,7 +62,8 @@ class DockerNetworks {
     return await this.connection.request({
       method: "GET",
       path: "/networks",
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 

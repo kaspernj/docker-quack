@@ -1,6 +1,8 @@
 import http from "node:http"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import Docker from "../src/index.js"
+import DockerVolumes from "../src/volumes.js"
+import FakeDockerConnection from "./support/fake-docker-connection.js"
 
 function createMockServer(handler) {
   return new Promise((resolve) => {
@@ -32,6 +34,27 @@ function captureRequest(req, callback) {
 }
 
 describe("DockerVolumes", () => {
+  it("forwards timeoutMs to every volume command request", async () => {
+    const connection = new FakeDockerConnection()
+    const volumes = new DockerVolumes(connection)
+    const timeoutMs = 45_000
+
+    await volumes.create({Name: "my-volume", Labels: {env: "test"}, timeoutMs})
+    await volumes.remove({name: "my-volume", force: true, timeoutMs})
+    await volumes.inspect({name: "my-volume", timeoutMs})
+    await volumes.list({timeoutMs})
+    await volumes.prune({timeoutMs})
+
+    expect(connection.calls[0].body).toEqual({Name: "my-volume", Labels: {env: "test"}})
+    expect(connection.calls.map((call) => [call.method, call.path, call.timeoutMs])).toEqual([
+      ["POST", "/volumes/create", timeoutMs],
+      ["DELETE", "/volumes/my-volume", timeoutMs],
+      ["GET", "/volumes/my-volume", timeoutMs],
+      ["GET", "/volumes", timeoutMs],
+      ["POST", "/volumes/prune", timeoutMs]
+    ])
+  })
+
   it("create() sends POST /volumes/create with body", async () => {
     let captured = null
     const volumeData = {Name: "my-volume", Driver: "local", Mountpoint: "/var/lib/docker/volumes/my-volume/_data"}

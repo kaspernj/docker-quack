@@ -1,6 +1,8 @@
 import http from "node:http"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import Docker from "../src/index.js"
+import DockerNetworks from "../src/networks.js"
+import FakeDockerConnection from "./support/fake-docker-connection.js"
 
 function createMockServer(handler) {
   return new Promise((resolve) => {
@@ -32,6 +34,27 @@ function captureRequest(req, callback) {
 }
 
 describe("DockerNetworks", () => {
+  it("forwards timeoutMs to every network command request", async () => {
+    const connection = new FakeDockerConnection()
+    const networks = new DockerNetworks(connection)
+    const timeoutMs = 45_000
+
+    await networks.create({Name: "my-network", Driver: "bridge", timeoutMs})
+    await networks.remove({id: "network-123", timeoutMs})
+    await networks.inspect({id: "network-123", timeoutMs})
+    await networks.list({timeoutMs})
+    await networks.prune({timeoutMs})
+
+    expect(connection.calls[0].body).toEqual({Name: "my-network", Driver: "bridge"})
+    expect(connection.calls.map((call) => [call.method, call.path, call.timeoutMs])).toEqual([
+      ["POST", "/networks/create", timeoutMs],
+      ["DELETE", "/networks/network-123", timeoutMs],
+      ["GET", "/networks/network-123", timeoutMs],
+      ["GET", "/networks", timeoutMs],
+      ["POST", "/networks/prune", timeoutMs]
+    ])
+  })
+
   it("create() sends POST /networks/create with body", async () => {
     let captured = null
 

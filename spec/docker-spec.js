@@ -5,6 +5,7 @@ import DockerContainers from "../src/containers.js"
 import DockerImages from "../src/images.js"
 import DockerNetworks from "../src/networks.js"
 import DockerVolumes from "../src/volumes.js"
+import FakeDockerConnection from "./support/fake-docker-connection.js"
 
 function createMockServer(handler) {
   return new Promise((resolve) => {
@@ -53,6 +54,20 @@ describe("Docker", () => {
     } finally {
       docker.close()
     }
+  })
+
+  it("forwards timeoutMs to root Docker commands", async () => {
+    const connection = new FakeDockerConnection()
+    const docker = new Docker(connection)
+    const timeoutMs = 45_000
+
+    await docker.version({timeoutMs})
+    await docker.info({timeoutMs})
+
+    expect(connection.calls.map((call) => [call.method, call.path, call.timeoutMs])).toEqual([
+      ["GET", "/version", timeoutMs],
+      ["GET", "/info", timeoutMs]
+    ])
   })
 
   it("version() sends GET /version", async () => {

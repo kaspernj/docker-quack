@@ -1,3 +1,4 @@
+import {Readable} from "node:stream"
 import * as zlib from "node:zlib"
 import SnapReq from "snapreq"
 import {SnapReqTimeoutError} from "snapreq/errors"
@@ -22,7 +23,7 @@ import {SnapReqTimeoutError} from "snapreq/errors"
  * @property {number} port - Docker port
  * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {TlsOptions} [tls] - TLS options for HTTPS connections
- * @property {number} [timeoutMs] - Per-request timeout for buffered (non-streaming) requests. An unreachable host that accepts the connection but never responds would otherwise hang forever. Defaults to 120000ms. Set to 0 to disable.
+ * @property {number} [timeoutMs] - Per-request timeout for buffered requests. An unreachable host that accepts the connection but never responds would otherwise hang forever. Defaults to 120000ms. Set to 0 to disable.
  */
 
 /**
@@ -39,7 +40,7 @@ import {SnapReqTimeoutError} from "snapreq/errors"
  * @property {object} [headers] - Additional headers
  * @property {AbortSignal} [signal] - Optional abort signal for streaming requests
  * @property {boolean | RetryOptions} [retry] - Retry transient Docker API or connection failures
- * @property {number} [timeoutMs] - Overrides the connection's default per-request timeout for this buffered request. Set to 0 to disable.
+ * @property {number} [timeoutMs] - Overrides the per-request timeout for this request. Buffered requests use the connection default when omitted; streaming requests only time out when this is set. Set to 0 to disable.
  */
 
 /**
@@ -212,16 +213,7 @@ class DockerConnection {
 
       return await response.buffer()
     } catch (error) {
-      if (error instanceof SnapReqTimeoutError) {
-        throw new DockerConnectionTimeoutError({
-          message: `Docker request timed out after ${timeoutMs}ms: ${options.method} ${fullPath}`,
-          method: options.method,
-          path: fullPath,
-          timeoutMs
-        })
-      }
-
-      throw error
+      throw this.mapSnapReqTimeoutError(error, options.method, fullPath, timeoutMs)
     }
   }
 
@@ -360,14 +352,22 @@ class DockerConnection {
    */
   async requestStream(options) {
     const fullPath = this.buildPath(options.path, options.query)
-    const response = await this.client.requestStream({
-      method: options.method,
-      path: fullPath,
-      body: options.body,
-      bodyCompression: options.bodyCompression,
-      headers: this.requestHeaders(options.headers),
-      signal: options.signal
-    })
+    const timeoutMs = options.timeoutMs ?? this.timeoutMs
+    let response
+
+    try {
+      response = await this.client.requestStream({
+        method: options.method,
+        path: fullPath,
+        body: options.body,
+        bodyCompression: options.bodyCompression,
+        headers: this.requestHeaders(options.headers),
+        signal: options.signal,
+        timeoutMs: options.timeoutMs
+      })
+    } catch (error) {
+      throw this.mapSnapReqTimeoutError(error, options.method, fullPath, timeoutMs)
+    }
 
     if (response.status >= 400) {
       const buffer = await response.buffer()
@@ -384,11 +384,55 @@ class DockerConnection {
       throw new Error(`Docker API error ${response.status} ${options.method} ${fullPath}: ${message}`)
     }
 
-    if (!response.nodeStream) {
-      throw new Error("Docker streaming requires the Node transport, which exposes a raw stream.")
+    if (!response.streamable) {
+      throw new Error("Docker streaming requires a transport that exposes a readable response stream.")
     }
 
-    return {stream: response.nodeStream, statusCode: response.status}
+    return {
+      stream: this.responseReadableStream(response.stream(), options.method, fullPath, timeoutMs),
+      statusCode: response.status
+    }
+  }
+
+  /**
+   * @param {AsyncIterable<Uint8Array>} source
+   * @param {string} method
+   * @param {string} fullPath
+   * @param {number} timeoutMs
+   * @returns {import("node:stream").Readable}
+   */
+  responseReadableStream(source, method, fullPath, timeoutMs) {
+    const connection = this
+
+    return Readable.from((async function* () {
+      try {
+        for await (const chunk of source) {
+          yield chunk
+        }
+      } catch (error) {
+        throw connection.mapSnapReqTimeoutError(error, method, fullPath, timeoutMs)
+      }
+    })())
+  }
+
+  /**
+   * @param {unknown} error
+   * @param {string} method
+   * @param {string} fullPath
+   * @param {number} timeoutMs
+   * @returns {unknown}
+   */
+  mapSnapReqTimeoutError(error, method, fullPath, timeoutMs) {
+    if (error instanceof SnapReqTimeoutError) {
+      return new DockerConnectionTimeoutError({
+        message: `Docker request timed out after ${error.timeoutMs || timeoutMs}ms: ${method} ${fullPath}`,
+        method,
+        path: fullPath,
+        timeoutMs: error.timeoutMs || timeoutMs
+      })
+    }
+
+    return error
   }
 
   /** Destroy the keep-alive agent, closing all persistent connections. */

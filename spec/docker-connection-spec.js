@@ -372,6 +372,32 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("times out an explicitly bounded streaming response body", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {"Content-Type": "application/vnd.docker.raw-stream"})
+      res.write("partial stream output")
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      const {stream} = await connection.requestStream({method: "GET", path: "/stream", timeoutMs: 50})
+
+      await expect(async () => {
+        const chunks = []
+
+        for await (const chunk of stream) {
+          chunks.push(chunk)
+        }
+      }).toThrow("Docker request timed out after 50ms: GET /stream")
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
   it("fails clearly for unsupported response content encodings", async () => {
     const server = http.createServer((_req, res) => {
       res.writeHead(200, {"Content-Encoding": "compress", "Content-Type": "application/json"})

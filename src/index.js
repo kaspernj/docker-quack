@@ -13,6 +13,11 @@ import DockerVolumes from "./volumes.js"
  * @property {number} [timeoutMs] - Per-request timeout for buffered Docker API requests
  */
 
+/**
+ * @typedef {object} CommandOptions
+ * @property {number} [timeoutMs] - Optional per-request timeout for the command request.
+ */
+
 /** Docker Engine API client with HTTP keep-alive connections. */
 class Docker {
   /**
@@ -39,23 +44,27 @@ class Docker {
 
   /**
    * Get Docker version information.
+   * @param {CommandOptions} [options]
    * @returns {Promise<object>}
    */
-  async version() {
+  async version(options = {}) {
     return await this.connection.request({
       method: "GET",
-      path: "/version"
+      path: "/version",
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Get Docker system information.
+   * @param {CommandOptions} [options]
    * @returns {Promise<object>}
    */
-  async info() {
+  async info(options = {}) {
     return await this.connection.request({
       method: "GET",
-      path: "/info"
+      path: "/info",
+      timeoutMs: options.timeoutMs
     })
   }
 

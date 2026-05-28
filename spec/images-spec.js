@@ -1,6 +1,8 @@
 import http from "node:http"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import Docker from "../src/index.js"
+import DockerImages from "../src/images.js"
+import FakeDockerConnection from "./support/fake-docker-connection.js"
 
 function createMockServer(handler) {
   return new Promise((resolve) => {
@@ -32,6 +34,39 @@ function jsonResponse(res, statusCode, body) {
 }
 
 describe("DockerImages", () => {
+  class ExistingTargetFakeConnection extends FakeDockerConnection {
+    constructor() {
+      super()
+      this.tagAttempts = 0
+    }
+
+    responseFor(options) {
+      if (options.path === "/images/sha256%3Anew-image/tag") {
+        this.tagAttempts += 1
+
+        if (this.tagAttempts === 1) {
+          throw new Error("image already exists")
+        }
+
+        return {}
+      }
+
+      if (options.path === "/images/sha256:new-image/json") {
+        return {Id: "sha256:new-image"}
+      }
+
+      if (options.path === "/images/my-repo:latest/json") {
+        return {Id: "sha256:old-image"}
+      }
+
+      if (options.path === "/images/my-repo:latest") {
+        return [{Untagged: "my-repo:latest"}]
+      }
+
+      return super.responseFor(options)
+    }
+  }
+
   it("pull() sends POST /images/create with fromImage query param", async () => {
     let captured = null
 
@@ -55,6 +90,28 @@ describe("DockerImages", () => {
       docker.close()
       server.close()
     }
+  })
+
+  it("forwards timeoutMs to every image command request", async () => {
+    const connection = new FakeDockerConnection()
+    const images = new DockerImages(connection)
+    const timeoutMs = 45_000
+
+    await images.pull({image: "ubuntu:24.04", timeoutMs})
+    await images.inspect({name: "ubuntu:24.04", timeoutMs})
+    await images.remove({name: "ubuntu:24.04", force: true, timeoutMs})
+    await images.tag({source: "sha256:abc123", repo: "my-repo", tag: "latest", timeoutMs})
+    await images.list({timeoutMs})
+    await images.prune({timeoutMs})
+
+    expect(connection.calls.map((call) => [call.method, call.path, call.timeoutMs])).toEqual([
+      ["POST", "/images/create", timeoutMs],
+      ["GET", "/images/ubuntu:24.04/json", timeoutMs],
+      ["DELETE", "/images/ubuntu:24.04", timeoutMs],
+      ["POST", "/images/sha256%3Aabc123/tag", timeoutMs],
+      ["GET", "/images/json", timeoutMs],
+      ["POST", "/images/prune", timeoutMs]
+    ])
   })
 
   it("pull() with auth sets X-Registry-Auth header", async () => {
@@ -254,6 +311,22 @@ describe("DockerImages", () => {
       docker.close()
       server.close()
     }
+  })
+
+  it("tag() forwards timeoutMs through the existing-target replacement path", async () => {
+    const connection = new ExistingTargetFakeConnection()
+    const images = new DockerImages(connection)
+    const timeoutMs = 45_000
+
+    await images.tag({source: "sha256:new-image", repo: "my-repo", tag: "latest", timeoutMs})
+
+    expect(connection.calls.map((call) => [call.method, call.path, call.timeoutMs])).toEqual([
+      ["POST", "/images/sha256%3Anew-image/tag", timeoutMs],
+      ["GET", "/images/sha256:new-image/json", timeoutMs],
+      ["GET", "/images/my-repo:latest/json", timeoutMs],
+      ["DELETE", "/images/my-repo:latest", timeoutMs],
+      ["POST", "/images/sha256%3Anew-image/tag", timeoutMs]
+    ])
   })
 
   it("list() sends GET /images/json", async () => {

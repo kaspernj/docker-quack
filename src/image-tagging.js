@@ -10,7 +10,7 @@ export default class DockerImageTagger {
   /**
    * Tags a Docker image, matching `docker tag` behavior when Docker reports that
    * the destination reference already exists.
-   * @param {{source: string, repo: string, tag?: string}} options
+   * @param {{source: string, repo: string, tag?: string, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async tag(options) {
@@ -19,7 +19,8 @@ export default class DockerImageTagger {
     const tagRequest = {
       method: "POST",
       path: `/images/${encodeURIComponent(options.source)}/tag`,
-      query: {repo: options.repo, tag}
+      query: {repo: options.repo, tag},
+      timeoutMs: options.timeoutMs
     }
 
     try {
@@ -31,14 +32,14 @@ export default class DockerImageTagger {
       }
     }
 
-    const sourceImageId = this.imageIdFromResponse(await this.inspectImage(options.source), options.source)
-    const targetImageId = this.imageIdFromResponse(await this.inspectImage(targetImage), targetImage)
+    const sourceImageId = this.imageIdFromResponse(await this.inspectImage(options.source, options.timeoutMs), options.source)
+    const targetImageId = this.imageIdFromResponse(await this.inspectImage(targetImage, options.timeoutMs), targetImage)
 
     if (sourceImageId === targetImageId) {
       return
     }
 
-    await this.removeImage(targetImage)
+    await this.removeImage(targetImage, options.timeoutMs)
     await this.connection.request(tagRequest)
   }
 
@@ -72,24 +73,28 @@ export default class DockerImageTagger {
 
   /**
    * @param {string} name
+   * @param {number} [timeoutMs]
    * @returns {Promise<object>}
    */
-  async inspectImage(name) {
+  async inspectImage(name, timeoutMs) {
     return await this.connection.request({
       method: "GET",
-      path: `/images/${name}/json`
+      path: `/images/${name}/json`,
+      timeoutMs
     })
   }
 
   /**
    * @param {string} name
+   * @param {number} [timeoutMs]
    * @returns {Promise<object[]>}
    */
-  async removeImage(name) {
+  async removeImage(name, timeoutMs) {
     return await this.connection.request({
       method: "DELETE",
       path: `/images/${name}`,
-      query: {force: true}
+      query: {force: true},
+      timeoutMs
     })
   }
 }
