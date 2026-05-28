@@ -5,6 +5,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} image - Image name with optional tag (e.g. "postgres:16")
  * @property {{username: string, password: string, serveraddress?: string}} [auth] - Registry authentication
  * @property {(progress: object) => void} [onProgress] - Called with each progress object as it arrives
+ * @property {number} [timeoutMs] - Optional per-request timeout for the pull stream.
  */
 
 /**
@@ -12,6 +13,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} source - Existing image name, tag, ID, or digest to tag
  * @property {string} repo - Target image repository
  * @property {string} [tag] - Target image tag. Defaults to `latest`.
+ * @property {number} [timeoutMs] - Optional per-request timeout for the tag operation.
  */
 
 /** Docker images API. */
@@ -45,7 +47,8 @@ class DockerImages {
       method: "POST",
       path: "/images/create",
       query,
-      headers
+      headers,
+      timeoutMs: options.timeoutMs
     })
 
     // Consume the pull progress stream to completion
@@ -54,19 +57,20 @@ class DockerImages {
 
   /**
    * Inspect an image.
-   * @param {{name: string}} options
+   * @param {{name: string, timeoutMs?: number}} options
    * @returns {Promise<object>}
    */
   async inspect(options) {
     return await this.connection.request({
       method: "GET",
-      path: `/images/${options.name}/json`
+      path: `/images/${options.name}/json`,
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Remove an image.
-   * @param {{name: string, force?: boolean}} options
+   * @param {{name: string, force?: boolean, timeoutMs?: number}} options
    * @returns {Promise<object[]>}
    */
   async remove(options) {
@@ -75,7 +79,8 @@ class DockerImages {
     return await this.connection.request({
       method: "DELETE",
       path: `/images/${options.name}`,
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 
@@ -89,13 +94,14 @@ class DockerImages {
     await this.imageTagger.tag({
       source: options.source,
       repo: options.repo,
-      tag: options.tag
+      tag: options.tag,
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * List images.
-   * @param {{filters?: object}} [options]
+   * @param {{filters?: object, timeoutMs?: number}} [options]
    * @returns {Promise<object[]>}
    */
   async list(options = {}) {
@@ -106,7 +112,8 @@ class DockerImages {
     return await this.connection.request({
       method: "GET",
       path: "/images/json",
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 

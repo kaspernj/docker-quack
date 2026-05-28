@@ -9,20 +9,23 @@ class DockerVolumes {
 
   /**
    * Create a volume.
-   * @param {{Name: string, Labels?: Record<string, string>}} options
+   * @param {{Name: string, Labels?: Record<string, string>, timeoutMs?: number}} options
    * @returns {Promise<object>}
    */
   async create(options) {
+    const {timeoutMs, ...body} = options
+
     return await this.connection.request({
       method: "POST",
       path: "/volumes/create",
-      body: options
+      body,
+      timeoutMs
     })
   }
 
   /**
    * Remove a volume.
-   * @param {{name: string, force?: boolean}} options
+   * @param {{name: string, force?: boolean, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async remove(options) {
@@ -31,25 +34,27 @@ class DockerVolumes {
     await this.connection.requestRaw({
       method: "DELETE",
       path: `/volumes/${options.name}`,
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Inspect a volume.
-   * @param {{name: string}} options
+   * @param {{name: string, timeoutMs?: number}} options
    * @returns {Promise<object>}
    */
   async inspect(options) {
     return await this.connection.request({
       method: "GET",
-      path: `/volumes/${options.name}`
+      path: `/volumes/${options.name}`,
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * List volumes.
-   * @param {{filters?: object}} [options]
+   * @param {{filters?: object, timeoutMs?: number}} [options]
    * @returns {Promise<{Volumes: object[], Warnings: string[]}>}
    */
   async list(options = {}) {
@@ -60,7 +65,8 @@ class DockerVolumes {
     return await this.connection.request({
       method: "GET",
       path: "/volumes",
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 

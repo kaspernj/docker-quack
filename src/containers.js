@@ -13,6 +13,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {object} [NetworkingConfig] - Network configuration
  * @property {object} [HostConfig] - Host configuration (binds, port bindings, etc.)
  * @property {object} [ExposedPorts] - Exposed ports
+ * @property {number} [timeoutMs] - Optional per-request timeout for the create request.
  */
 
 /**
@@ -28,6 +29,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} [User] - User to run the command as
  * @property {(output: {stream: "stdout" | "stderr", data: string}) => void} [onOutput] - Called with each chunk as it arrives
  * @property {AbortSignal} [signal] - Optional signal to abort the exec stream
+ * @property {number} [timeoutMs] - Optional per-request timeout for the exec create/start/inspect requests.
  */
 
 /**
@@ -42,7 +44,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} id - Container ID
  * @property {string} [repo] - Optional image repository to tag after the commit
  * @property {string} [tag] - Optional image tag. Defaults to `latest` when `repo` is provided.
- * @property {number} [timeoutMs] - Optional per-request timeout for the commit request.
+ * @property {number} [timeoutMs] - Optional per-request timeout for the commit and tag requests.
  */
 
 /** Docker containers API. */
@@ -61,26 +63,28 @@ class DockerContainers {
    * @returns {Promise<{Id: string}>}
    */
   async create(options) {
-    const {name, ...body} = options
+    const {name, timeoutMs, ...body} = options
     const query = name ? {name} : undefined
 
     return await this.connection.request({
       method: "POST",
       path: "/containers/create",
       query,
-      body
+      body,
+      timeoutMs
     })
   }
 
   /**
    * Start a container.
-   * @param {{id: string}} options
+   * @param {{id: string, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async start(options) {
     await this.connection.requestRaw({
       method: "POST",
-      path: `/containers/${options.id}/start`
+      path: `/containers/${options.id}/start`,
+      timeoutMs: options.timeoutMs
     })
   }
 
@@ -121,7 +125,7 @@ class DockerContainers {
 
   /**
    * Remove a container.
-   * @param {{id: string, force?: boolean}} options
+   * @param {{id: string, force?: boolean, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async remove(options) {
@@ -130,25 +134,27 @@ class DockerContainers {
     await this.connection.requestRaw({
       method: "DELETE",
       path: `/containers/${options.id}`,
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Inspect a container.
-   * @param {{id: string}} options
+   * @param {{id: string, timeoutMs?: number}} options
    * @returns {Promise<object>}
    */
   async inspect(options) {
     return await this.connection.request({
       method: "GET",
-      path: `/containers/${options.id}/json`
+      path: `/containers/${options.id}/json`,
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Fetch container logs. Parses the multiplexed stream header when tty is not used.
-   * @param {{id: string, stdout?: boolean, stderr?: boolean, follow?: boolean, since?: number | string, tail?: string | number, signal?: AbortSignal, onOutput?: (output: {stream: "stdout" | "stderr", data: string}) => void}} options
+   * @param {{id: string, stdout?: boolean, stderr?: boolean, follow?: boolean, since?: number | string, tail?: string | number, signal?: AbortSignal, timeoutMs?: number, onOutput?: (output: {stream: "stdout" | "stderr", data: string}) => void}} options
    * @returns {Promise<string>}
    */
   async logs(options) {
@@ -165,7 +171,8 @@ class DockerContainers {
       method: "GET",
       path: `/containers/${options.id}/logs`,
       query,
-      signal: options.signal
+      signal: options.signal,
+      timeoutMs: options.timeoutMs
     })
 
     return await this.consumeLogStream(stream, options.onOutput)
@@ -192,7 +199,8 @@ class DockerContainers {
     const execCreate = await this.connection.request({
       method: "POST",
       path: `/containers/${options.id}/exec`,
-      body: execBody
+      body: execBody,
+      timeoutMs: options.timeoutMs
     })
 
     const execId = execCreate.Id
@@ -202,7 +210,8 @@ class DockerContainers {
       method: "POST",
       path: `/exec/${execId}/start`,
       body: {Detach: false, Tty: false},
-      signal: options.signal
+      signal: options.signal,
+      timeoutMs: options.timeoutMs
     })
 
     const {stdout, stderr} = await this.demuxStream(stream, options.onOutput)
@@ -210,7 +219,8 @@ class DockerContainers {
     // Step 3: Inspect exec to get exit code
     const execInspect = await this.connection.request({
       method: "GET",
-      path: `/exec/${execId}/json`
+      path: `/exec/${execId}/json`,
+      timeoutMs: options.timeoutMs
     })
 
     return {
@@ -241,7 +251,8 @@ class DockerContainers {
       await this.imageTagger.tag({
         source: this.imageTagger.imageIdFromResponse(result, options.id),
         repo: options.repo,
-        tag: options.tag
+        tag: options.tag,
+        timeoutMs: options.timeoutMs
       })
     }
 
@@ -250,7 +261,7 @@ class DockerContainers {
 
   /**
    * Upload a tar archive to a container path.
-   * @param {{id: string, path: string, archive: Buffer | import("node:stream").Readable, archiveCompression?: ArchiveCompression}} options
+   * @param {{id: string, path: string, archive: Buffer | import("node:stream").Readable, archiveCompression?: ArchiveCompression, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async putArchive(options) {
@@ -259,7 +270,8 @@ class DockerContainers {
       path: `/containers/${options.id}/archive`,
       query: {path: options.path},
       body: this.archiveBody(options.archive, options.archiveCompression || "gzip"),
-      headers: {"Content-Type": "application/x-tar"}
+      headers: {"Content-Type": "application/x-tar"},
+      timeoutMs: options.timeoutMs
     })
   }
 
@@ -298,20 +310,21 @@ class DockerContainers {
 
   /**
    * Download a tar archive of a container path.
-   * @param {{id: string, path: string}} options
+   * @param {{id: string, path: string, timeoutMs?: number}} options
    * @returns {Promise<Buffer>}
    */
   async getArchive(options) {
     return await this.connection.requestRaw({
       method: "GET",
       path: `/containers/${options.id}/archive`,
-      query: {path: options.path}
+      query: {path: options.path},
+      timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * List containers.
-   * @param {{all?: boolean, filters?: object}} [options]
+   * @param {{all?: boolean, filters?: object, timeoutMs?: number}} [options]
    * @returns {Promise<object[]>}
    */
   async list(options = {}) {
@@ -323,7 +336,8 @@ class DockerContainers {
     return await this.connection.request({
       method: "GET",
       path: "/containers/json",
-      query
+      query,
+      timeoutMs: options.timeoutMs
     })
   }
 
@@ -347,14 +361,15 @@ class DockerContainers {
 
   /**
    * Get one-shot container stats (no streaming).
-   * @param {{id: string}} options
+   * @param {{id: string, timeoutMs?: number}} options
    * @returns {Promise<object>}
    */
   async stats(options) {
     return await this.connection.request({
       method: "GET",
       path: `/containers/${options.id}/stats`,
-      query: {stream: false}
+      query: {stream: false},
+      timeoutMs: options.timeoutMs
     })
   }
 

@@ -3,6 +3,7 @@ import {gunzipSync} from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import Docker from "../src/index.js"
 import DockerContainers from "../src/containers.js"
+import FakeDockerConnection from "./support/fake-docker-connection.js"
 
 function createMockServer(handler) {
   return new Promise((resolve) => {
@@ -137,6 +138,52 @@ describe("DockerContainers", () => {
     } finally {
       docker.close()
     }
+  })
+
+  it("forwards timeoutMs to every container command request", async () => {
+    const connection = new FakeDockerConnection()
+    const containers = new DockerContainers(connection)
+    const timeoutMs = 45_000
+
+    await containers.create({name: "container-name", Image: "ubuntu:24.04", timeoutMs})
+    await containers.start({id: "container-123", timeoutMs})
+    await containers.stop({id: "container-123", t: 30, timeoutMs})
+    await containers.remove({id: "container-123", force: true, timeoutMs})
+    await containers.inspect({id: "container-123", timeoutMs})
+    await containers.logs({id: "container-123", timeoutMs})
+    await containers.exec({id: "container-123", Cmd: ["echo", "hello"], timeoutMs})
+    await containers.commit({id: "container-123", repo: "repo", tag: "latest", timeoutMs})
+    await containers.putArchive({
+      id: "container-123",
+      path: "/tmp",
+      archive: Buffer.from("tar payload"),
+      archiveCompression: "identity",
+      timeoutMs
+    })
+    await containers.getArchive({id: "container-123", path: "/tmp", timeoutMs})
+    await containers.list({all: true, timeoutMs})
+    await containers.prune({timeoutMs})
+    await containers.stats({id: "container-123", timeoutMs})
+
+    expect(connection.calls[0].body).toEqual({Image: "ubuntu:24.04"})
+    expect(connection.calls.map((call) => [call.method, call.path, call.timeoutMs])).toEqual([
+      ["POST", "/containers/create", timeoutMs],
+      ["POST", "/containers/container-123/start", timeoutMs],
+      ["POST", "/containers/container-123/stop", timeoutMs],
+      ["DELETE", "/containers/container-123", timeoutMs],
+      ["GET", "/containers/container-123/json", timeoutMs],
+      ["GET", "/containers/container-123/logs", timeoutMs],
+      ["POST", "/containers/container-123/exec", timeoutMs],
+      ["POST", "/exec/exec-123/start", timeoutMs],
+      ["GET", "/exec/exec-123/json", timeoutMs],
+      ["POST", "/commit", timeoutMs],
+      ["POST", "/images/sha256%3Acommitted-image/tag", timeoutMs],
+      ["PUT", "/containers/container-123/archive", timeoutMs],
+      ["GET", "/containers/container-123/archive", timeoutMs],
+      ["GET", "/containers/json", timeoutMs],
+      ["POST", "/containers/prune", timeoutMs],
+      ["GET", "/containers/container-123/stats", timeoutMs]
+    ])
   })
 
   it("remove() sends DELETE /containers/{id}", async () => {
@@ -316,7 +363,8 @@ describe("DockerContainers", () => {
     expect(requests[1]).toEqual({
       method: "POST",
       path: "/images/sha256%3Acommitted-with-timeout/tag",
-      query: {repo: "my-repo", tag: "latest"}
+      query: {repo: "my-repo", tag: "latest"},
+      timeoutMs: 300_000
     })
   })
 

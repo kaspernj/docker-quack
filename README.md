@@ -17,7 +17,7 @@ Docker Engine API client with HTTP keep-alive for Node.js.
 - Image pull with streaming progress and registry authentication
 - Image tagging handles existing destination tags idempotently
 - TLS client certificate support
-- Configurable timeouts for buffered Docker API requests
+- Configurable timeouts for Docker API requests and high-level commands
 
 ## Installation
 
@@ -46,18 +46,19 @@ const docker = Docker.open({
 
 ### Timeouts
 
-Buffered Docker API requests default to a 120000ms timeout. Override it on the connection or on a single request; use `0` to disable a timeout. Streaming requests are left untimed so logs, pulls and exec streams can stay open.
+Buffered Docker API requests default to a 120000ms timeout. Override it on the connection or on a single request; use `0` to disable a timeout. Every high-level command accepts `timeoutMs`. Streaming commands (`pull`, `logs`, and `exec`) stay untimed by default so they can stay open, but an explicit `timeoutMs` on the command bounds that stream.
 
 ```js
 const docker = Docker.open({host: "127.0.0.1", port: 2375, timeoutMs: 30000})
 const version = await docker.connection.request({method: "GET", path: "/version", timeoutMs: 5000})
+await docker.containers.logs({id: "container-id", follow: true, timeoutMs: 300000})
 ```
 
 ### System info
 
 ```js
-const version = await docker.version()
-const info = await docker.info()
+const version = await docker.version({timeoutMs: 5000})
+const info = await docker.info({timeoutMs: 5000})
 ```
 
 ### Containers
@@ -103,7 +104,7 @@ const stats = await docker.containers.stats({id: Id})
 const containers = await docker.containers.list()
 const allContainers = await docker.containers.list({all: true})
 
-// Commit to image. timeoutMs overrides the connection timeout for this long-running request.
+// Commit to image. timeoutMs overrides the timeout for this long-running command.
 await docker.containers.commit({id: Id, repo: "my-repo", tag: "latest", timeoutMs: 300000})
 
 // Archive upload/download. putArchive gzips the uploaded tar by default.
@@ -116,7 +117,7 @@ await docker.containers.stop({id: Id})
 await docker.containers.remove({id: Id})
 await docker.containers.remove({id: Id, force: true})
 
-// Prune stopped containers. timeoutMs overrides the connection timeout for long-running prune requests.
+// Prune stopped containers. timeoutMs overrides the timeout for long-running prune requests.
 await docker.containers.prune({timeoutMs: 300000})
 ```
 
@@ -152,7 +153,7 @@ const images = await docker.images.list()
 // Remove
 await docker.images.remove({name: "alpine:3.21"})
 
-// Prune unused images. timeoutMs overrides the connection timeout for long-running prune requests.
+// Prune unused images. timeoutMs overrides the timeout for long-running prune requests.
 await docker.images.prune({filters: {dangling: ["false"]}, timeoutMs: 300000})
 ```
 
@@ -171,7 +172,7 @@ const networks = await docker.networks.list()
 // Remove
 await docker.networks.remove({id: Id})
 
-// Prune unused networks. timeoutMs overrides the connection timeout for long-running prune requests.
+// Prune unused networks. timeoutMs overrides the timeout for long-running prune requests.
 await docker.networks.prune({timeoutMs: 300000})
 ```
 
@@ -190,7 +191,7 @@ const {Volumes} = await docker.volumes.list()
 // Remove
 await docker.volumes.remove({name: "my-volume"})
 
-// Prune unused volumes. timeoutMs overrides the connection timeout for long-running prune requests.
+// Prune unused volumes. timeoutMs overrides the timeout for long-running prune requests.
 await docker.volumes.prune({timeoutMs: 300000})
 ```
 
