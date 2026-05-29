@@ -222,6 +222,30 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("maps raw ETIMEDOUT buffered request errors to DockerConnectionTimeoutError", async () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375, timeoutMs: 120_000})
+
+    connection.client = {
+      async request() {
+        const error = /** @type {Error & {code: string}} */ (new Error("read ETIMEDOUT"))
+
+        error.code = "ETIMEDOUT"
+        throw error
+      },
+      close() {}
+    }
+
+    try {
+      await expect(async () => await connection.request({
+        method: "GET",
+        path: "/containers/tensorbuzz-build/stats",
+        query: {stream: false}
+      })).toThrow("Docker request timed out after 120000ms: GET /containers/tensorbuzz-build/stats?stream=false")
+    } finally {
+      connection.close()
+    }
+  })
+
   it("requests supported response content encodings by default", async () => {
     let acceptEncoding = null
 
@@ -395,6 +419,44 @@ describe("DockerConnection", () => {
     } finally {
       connection.close()
       server.close()
+    }
+  })
+
+  it("maps raw ETIMEDOUT streaming response errors to DockerConnectionTimeoutError", async () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375, timeoutMs: 120_000})
+
+    connection.client = {
+      async requestStream() {
+        return {
+          status: 200,
+          streamable: true,
+          stream() {
+            return (async function* () {
+              yield Buffer.from("partial output")
+
+              const error = /** @type {Error & {code: string}} */ (new Error("read ETIMEDOUT"))
+
+              error.code = "ETIMEDOUT"
+              throw error
+            })()
+          }
+        }
+      },
+      close() {}
+    }
+
+    try {
+      const {stream} = await connection.requestStream({method: "POST", path: "/exec/exec-123/start"})
+
+      await expect(async () => {
+        const chunks = []
+
+        for await (const chunk of stream) {
+          chunks.push(chunk)
+        }
+      }).toThrow("Docker request timed out after 120000ms: POST /exec/exec-123/start")
+    } finally {
+      connection.close()
     }
   })
 
