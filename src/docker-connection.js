@@ -423,16 +423,34 @@ class DockerConnection {
    * @returns {unknown}
    */
   mapSnapReqTimeoutError(error, method, fullPath, timeoutMs) {
-    if (error instanceof SnapReqTimeoutError) {
+    if (error instanceof SnapReqTimeoutError || this.rawConnectionTimeoutError(error)) {
+      const effectiveTimeoutMs = error instanceof SnapReqTimeoutError ? error.timeoutMs || timeoutMs : timeoutMs
+
       return new DockerConnectionTimeoutError({
-        message: `Docker request timed out after ${error.timeoutMs || timeoutMs}ms: ${method} ${fullPath}`,
+        message: `Docker request timed out after ${effectiveTimeoutMs}ms: ${method} ${fullPath}`,
         method,
         path: fullPath,
-        timeoutMs: error.timeoutMs || timeoutMs
+        timeoutMs: effectiveTimeoutMs
       })
     }
 
     return error
+  }
+
+  /**
+   * @param {unknown} error
+   * @returns {boolean}
+   */
+  rawConnectionTimeoutError(error) {
+    if (!error || typeof error !== "object") {
+      return false
+    }
+
+    if ("code" in error && error.code === "ETIMEDOUT") {
+      return true
+    }
+
+    return error instanceof Error && error.message.includes("ETIMEDOUT")
   }
 
   /** Destroy the keep-alive agent, closing all persistent connections. */
