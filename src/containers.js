@@ -13,6 +13,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {object} [NetworkingConfig] - Network configuration
  * @property {object} [HostConfig] - Host configuration (binds, port bindings, etc.)
  * @property {object} [ExposedPorts] - Exposed ports
+ * @property {Record<string, string>} [Labels] - Container labels (key/value), passed through to the Engine container config.
  * @property {number} [timeoutMs] - Optional per-request timeout for the create request.
  */
 
@@ -44,6 +45,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} id - Container ID
  * @property {string} [repo] - Optional image repository to tag after the commit
  * @property {string} [tag] - Optional image tag. Defaults to `latest` when `repo` is provided.
+ * @property {Record<string, string>} [Labels] - Optional labels to set on the committed image (sent as the commit container config).
  * @property {number} [timeoutMs] - Optional per-request timeout for the commit and tag requests.
  */
 
@@ -243,6 +245,7 @@ class DockerContainers {
       method: "POST",
       path: "/commit",
       query: {container: options.id},
+      ...(options.Labels ? {body: {Labels: options.Labels}} : {}),
       retry: true,
       timeoutMs: options.timeoutMs
     })

@@ -9,7 +9,7 @@ class DockerNetworks {
 
   /**
    * Create a network.
-   * @param {{Name: string, Driver?: string, IPAM?: object, timeoutMs?: number}} options
+   * @param {{Name: string, Driver?: string, IPAM?: object, Labels?: Record<string, string>, timeoutMs?: number}} options
    * @returns {Promise<{Id: string}>}
    */
   async create(options) {
