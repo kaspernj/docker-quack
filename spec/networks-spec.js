@@ -81,6 +81,29 @@ describe("DockerNetworks", () => {
     }
   })
 
+  it("create() forwards Labels to the Engine network config", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        jsonResponse(res, 201, {Id: "network-abc123"})
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.networks.create({Name: "my-network", Labels: {tensorbuzz_resource: "build_network"}})
+
+      expect(JSON.parse(captured.body)).toEqual({Name: "my-network", Labels: {tensorbuzz_resource: "build_network"}})
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
   it("remove() sends DELETE /networks/{id}", async () => {
     let captured = null
 

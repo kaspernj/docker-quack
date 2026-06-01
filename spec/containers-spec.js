@@ -64,6 +64,29 @@ describe("DockerContainers", () => {
     }
   })
 
+  it("create() forwards Labels to the Engine container config", async () => {
+    let captured = null
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        captured = data
+        jsonResponse(res, 201, {Id: "container-123"})
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.containers.create({Image: "ubuntu:24.04", Labels: {service: "build", tensorbuzz_resource: "build_container"}})
+
+      expect(JSON.parse(captured.body)).toEqual({Image: "ubuntu:24.04", Labels: {service: "build", tensorbuzz_resource: "build_container"}})
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
   it("start() sends POST /containers/{id}/start", async () => {
     let captured = null
 
@@ -290,6 +313,31 @@ describe("DockerContainers", () => {
         ["POST", "/images/sha256%3Anewimage123/tag?repo=my-repo&tag=latest"]
       ])
       expect(result.Id).toEqual("sha256:newimage123")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("commit() sends Labels as the commit container config", async () => {
+    const requests = []
+
+    const server = await createMockServer((req, res) => {
+      captureRequest(req, (data) => {
+        requests.push(data)
+        jsonResponse(res, 201, {Id: "sha256:newimage123"})
+      })
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await docker.containers.commit({id: "abc123", Labels: {tensorbuzz_build_id: "b1", tensorbuzz_resource: "build_image"}})
+
+      expect(requests.length).toEqual(1)
+      expect(requests[0].url).toEqual("/commit?container=abc123")
+      expect(JSON.parse(requests[0].body)).toEqual({Labels: {tensorbuzz_build_id: "b1", tensorbuzz_resource: "build_image"}})
     } finally {
       docker.close()
       server.close()
