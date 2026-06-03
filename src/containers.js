@@ -29,7 +29,11 @@ import DockerImageTagger from "./image-tagging.js"
  */
 
 /**
- * @typedef {object} DockerContainerHostConfig
+ * @typedef {import("./docker-connection.js").DockerJsonValue | DockerDeviceMapping[] | DockerPortBinding[] | DockerRestartPolicy | DockerUlimit[] | Record<string, DockerPortBinding[]>} DockerHostConfigValue
+ */
+
+/**
+ * @typedef {object} DockerContainerHostConfigFields
  * @property {boolean} [AutoRemove] - Automatically remove the container after it exits.
  * @property {string[]} [Binds] - Host bind mounts.
  * @property {number} [CpuShares] - Relative CPU share weight.
@@ -42,6 +46,10 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {boolean} [Privileged] - Whether the container runs in privileged mode.
  * @property {DockerRestartPolicy} [RestartPolicy] - Container restart policy.
  * @property {DockerUlimit[]} [Ulimits] - Container ulimit overrides.
+ */
+
+/**
+ * @typedef {DockerContainerHostConfigFields & Record<string, DockerHostConfigValue>} DockerContainerHostConfig
  */
 
 /**

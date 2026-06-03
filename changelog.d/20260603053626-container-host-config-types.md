@@ -1,1 +1,1 @@
-Added reusable Docker API JSDoc types for container HostConfig/device mappings, network/image/volume responses, filters, and root version/info responses.
+Added reusable Docker API JSDoc types for container HostConfig/device mappings, network/image/volume responses, filters, and root version/info responses. HostConfig keeps an index signature so consumers can pass through Docker Engine fields that are not explicitly modeled yet.
