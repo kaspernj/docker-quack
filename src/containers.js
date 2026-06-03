@@ -45,6 +45,66 @@ import DockerImageTagger from "./image-tagging.js"
  */
 
 /**
+ * @typedef {object} DockerContainerEndpointSettings
+ * @property {string[]} [Aliases] - Network aliases for the container endpoint.
+ * @property {string[]} [Links] - Container links for the endpoint.
+ * @property {string} [NetworkID] - Docker network ID.
+ * @property {string} [EndpointID] - Docker endpoint ID.
+ * @property {string} [Gateway] - IPv4 gateway address.
+ * @property {string} [IPAddress] - IPv4 endpoint address.
+ * @property {number} [IPPrefixLen] - IPv4 prefix length.
+ * @property {string} [IPv6Gateway] - IPv6 gateway address.
+ * @property {string} [GlobalIPv6Address] - IPv6 endpoint address.
+ * @property {number} [GlobalIPv6PrefixLen] - IPv6 prefix length.
+ * @property {string} [MacAddress] - Endpoint MAC address.
+ */
+
+/**
+ * @typedef {object} DockerContainerNetworkingConfig
+ * @property {Record<string, DockerContainerEndpointSettings>} [EndpointsConfig] - Network-specific endpoint settings.
+ */
+
+/**
+ * @typedef {Record<string, Record<string, never>>} DockerContainerExposedPorts
+ */
+
+/**
+ * @typedef {object} DockerHealthcheckConfig
+ * @property {string[]} [Test] - Healthcheck command in Docker API form.
+ * @property {number} [Interval] - Healthcheck interval in nanoseconds.
+ * @property {number} [Timeout] - Healthcheck timeout in nanoseconds.
+ * @property {number} [StartPeriod] - Startup grace period in nanoseconds.
+ * @property {number} [Retries] - Number of retries before Docker marks the container unhealthy.
+ */
+
+/**
+ * @typedef {object} DockerContainerInspectResponse
+ * @property {string} [Id] - Container ID.
+ * @property {string} [Name] - Container name.
+ * @property {Record<string, string>} [Labels] - Container labels.
+ * @property {{Networks?: Record<string, DockerContainerEndpointSettings>}} [NetworkSettings] - Runtime network details.
+ * @property {DockerContainerHostConfig} [HostConfig] - Host configuration reported by Docker.
+ */
+
+/**
+ * @typedef {object} DockerContainerListItem
+ * @property {string} [Id] - Container ID.
+ * @property {string[]} [Names] - Container names.
+ * @property {string} [Image] - Image reference.
+ * @property {string} [ImageID] - Image ID.
+ * @property {string} [Command] - Container command.
+ * @property {number} [Created] - Creation time as a Unix timestamp.
+ * @property {Record<string, string>} [Labels] - Container labels.
+ * @property {string} [State] - Container state.
+ * @property {string} [Status] - Human-readable container status.
+ */
+
+/**
+ * @typedef {object} DockerContainerStatsResponse
+ * @property {{usage?: number, limit?: number}} [memory_stats] - One-shot memory usage data.
+ */
+
+/**
  * @typedef {object} CreateContainerOptions
  * @property {string} [name] - Container name
  * @property {string} Image - Image to use
@@ -52,9 +112,11 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string[]} [Env] - Environment variables
  * @property {string} [WorkingDir] - Working directory inside the container
  * @property {string} [User] - User inside the container
- * @property {object} [NetworkingConfig] - Network configuration
+ * @property {string[]} [Entrypoint] - Entrypoint command.
+ * @property {DockerContainerNetworkingConfig} [NetworkingConfig] - Network configuration
  * @property {DockerContainerHostConfig} [HostConfig] - Host configuration (binds, port bindings, etc.)
- * @property {object} [ExposedPorts] - Exposed ports
+ * @property {DockerContainerExposedPorts} [ExposedPorts] - Exposed ports
+ * @property {DockerHealthcheckConfig} [Healthcheck] - Container healthcheck configuration.
  * @property {Record<string, string>} [Labels] - Container labels (key/value), passed through to the Engine container config.
  * @property {number} [timeoutMs] - Optional per-request timeout for the create request.
  */
@@ -186,7 +248,7 @@ class DockerContainers {
   /**
    * Inspect a container.
    * @param {{id: string, timeoutMs?: number}} options
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerContainerInspectResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
@@ -369,10 +431,11 @@ class DockerContainers {
 
   /**
    * List containers.
-   * @param {{all?: boolean, filters?: object, timeoutMs?: number}} [options]
-   * @returns {Promise<object[]>}
+   * @param {{all?: boolean, filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @returns {Promise<DockerContainerListItem[]>}
    */
   async list(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.all) query.all = true
@@ -388,10 +451,11 @@ class DockerContainers {
 
   /**
    * Prune stopped containers.
-   * @param {{filters?: object, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
    * @returns {Promise<{ContainersDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.filters) query.filters = JSON.stringify(options.filters)
@@ -407,7 +471,7 @@ class DockerContainers {
   /**
    * Get one-shot container stats (no streaming).
    * @param {{id: string, timeoutMs?: number}} options
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerContainerStatsResponse>}
    */
   async stats(options) {
     return await this.connection.request({

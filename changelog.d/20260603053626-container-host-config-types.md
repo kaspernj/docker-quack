@@ -1,1 +1,1 @@
-Added Docker container HostConfig and device mapping JSDoc types for downstream consumers.
+Added reusable Docker API JSDoc types for container HostConfig/device mappings, network/image/volume responses, filters, and root version/info responses.

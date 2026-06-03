@@ -5,6 +5,33 @@ import DockerNetworks from "./networks.js"
 import DockerVolumes from "./volumes.js"
 
 /**
+ * @typedef {object} DockerVersionResponse
+ * @property {string} [Version] - Docker Engine version.
+ * @property {string} [ApiVersion] - Docker Engine API version.
+ * @property {string} [MinAPIVersion] - Minimum supported Docker Engine API version.
+ * @property {string} [GitCommit] - Docker Engine Git commit.
+ * @property {string} [GoVersion] - Go runtime version used by Docker.
+ * @property {string} [Os] - Docker Engine OS.
+ * @property {string} [Arch] - Docker Engine architecture.
+ * @property {string} [KernelVersion] - Host kernel version.
+ */
+
+/**
+ * @typedef {object} DockerInfoResponse
+ * @property {number} [Containers] - Total container count.
+ * @property {number} [ContainersRunning] - Running container count.
+ * @property {number} [ContainersPaused] - Paused container count.
+ * @property {number} [ContainersStopped] - Stopped container count.
+ * @property {number} [Images] - Image count.
+ * @property {string} [Driver] - Storage driver name.
+ * @property {string} [OperatingSystem] - Host operating system.
+ * @property {string} [OSType] - Host OS type.
+ * @property {string} [Architecture] - Host architecture.
+ * @property {number} [NCPU] - Host CPU count.
+ * @property {number} [MemTotal] - Host memory in bytes.
+ */
+
+/**
  * @typedef {object} DockerOpenOptions
  * @property {string} host - Docker host
  * @property {number} port - Docker port
@@ -45,7 +72,7 @@ class Docker {
   /**
    * Get Docker version information.
    * @param {CommandOptions} [options]
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerVersionResponse>}
    */
   async version(options = {}) {
     return await this.connection.request({
@@ -58,7 +85,7 @@ class Docker {
   /**
    * Get Docker system information.
    * @param {CommandOptions} [options]
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerInfoResponse>}
    */
   async info(options = {}) {
     return await this.connection.request({

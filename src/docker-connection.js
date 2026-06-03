@@ -4,6 +4,34 @@ import SnapReq from "snapreq"
 import {SnapReqTimeoutError} from "snapreq/errors"
 
 /**
+ * @typedef {string | number | boolean | null} DockerJsonScalar
+ */
+
+/**
+ * @typedef {DockerJsonScalar | DockerJsonArray | DockerJsonObject} DockerJsonValue
+ */
+
+/**
+ * @typedef {DockerJsonValue[]} DockerJsonArray
+ */
+
+/**
+ * @typedef {{[key: string]: DockerJsonValue}} DockerJsonObject
+ */
+
+/**
+ * @typedef {Record<string, Array<string | number | boolean>>} DockerFilters
+ */
+
+/**
+ * @typedef {Record<string, string | number | boolean | null | undefined>} DockerQuery
+ */
+
+/**
+ * @typedef {Record<string, string>} DockerRequestHeaders
+ */
+
+/**
  * @typedef {object} TlsOptions
  * @property {string | Buffer} ca - CA certificate
  * @property {string | Buffer} cert - Client certificate
@@ -34,10 +62,10 @@ import {SnapReqTimeoutError} from "snapreq/errors"
  * @typedef {object} RequestOptions
  * @property {string} method - HTTP method
  * @property {string} path - Request path
- * @property {object} [query] - Query parameters
- * @property {object | Buffer | import("node:stream").Readable} [body] - Request body
+ * @property {DockerQuery} [query] - Query parameters
+ * @property {DockerJsonValue | Buffer | import("node:stream").Readable} [body] - Request body
  * @property {CompressionEncoding} [bodyCompression] - Optional HTTP request body compression
- * @property {object} [headers] - Additional headers
+ * @property {DockerRequestHeaders} [headers] - Additional headers
  * @property {AbortSignal} [signal] - Optional abort signal for streaming requests
  * @property {boolean | RetryOptions} [retry] - Retry transient Docker API or connection failures
  * @property {number} [timeoutMs] - Overrides the per-request timeout for this request. Buffered requests use the connection default when omitted; streaming requests only time out when this is set. Set to 0 to disable.
@@ -120,7 +148,7 @@ class DockerConnection {
   /**
    * Build full request path including query parameters.
    * @param {string} path - Base path
-   * @param {Record<string, string | number | boolean>} [query] - Query params
+   * @param {DockerQuery} [query] - Query params
    * @returns {string}
    */
   buildPath(path, query) {
@@ -218,7 +246,7 @@ class DockerConnection {
   }
 
   /**
-   * @param {object | undefined} headers
+   * @param {DockerRequestHeaders | undefined} headers
    * @returns {Record<string, string>}
    */
   requestHeaders(headers) {
@@ -282,7 +310,7 @@ class DockerConnection {
    * @returns {boolean}
    */
   hasStreamingBody(options) {
-    return Boolean(options.body && typeof options.body === "object" && typeof options.body.pipe === "function")
+    return options.body instanceof Readable
   }
 
   /**

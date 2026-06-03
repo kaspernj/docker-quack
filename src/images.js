@@ -1,10 +1,50 @@
 import DockerImageTagger from "./image-tagging.js"
 
 /**
+ * @typedef {object} DockerRegistryAuth
+ * @property {string} username - Registry username.
+ * @property {string} password - Registry password.
+ * @property {string} [serveraddress] - Registry server URL.
+ */
+
+/**
+ * @typedef {object} DockerImagePullProgress
+ * @property {string} [status] - Pull status text.
+ * @property {string} [id] - Layer or image identifier.
+ * @property {string} [progress] - Human-readable progress text.
+ * @property {{current?: number, total?: number}} [progressDetail] - Numeric pull progress details.
+ * @property {string} [error] - Docker pull error text.
+ */
+
+/**
+ * @typedef {object} DockerImageInspectResponse
+ * @property {string} [Id] - Image ID.
+ * @property {string[]} [RepoTags] - Repository tags pointing at the image.
+ * @property {number} [Size] - Image size in bytes.
+ * @property {Record<string, string>} [Labels] - Image labels.
+ */
+
+/**
+ * @typedef {object} DockerImageDeleteResponse
+ * @property {string} [Deleted] - Deleted image layer ID.
+ * @property {string} [Untagged] - Removed image tag.
+ */
+
+/**
+ * @typedef {object} DockerImageListItem
+ * @property {string} [Id] - Image ID.
+ * @property {string[]} [RepoTags] - Repository tags pointing at the image.
+ * @property {string[]} [RepoDigests] - Repository digests pointing at the image.
+ * @property {number} [Created] - Creation time as a Unix timestamp.
+ * @property {number} [Size] - Image size in bytes.
+ * @property {Record<string, string>} [Labels] - Image labels.
+ */
+
+/**
  * @typedef {object} PullOptions
  * @property {string} image - Image name with optional tag (e.g. "postgres:16")
- * @property {{username: string, password: string, serveraddress?: string}} [auth] - Registry authentication
- * @property {(progress: object) => void} [onProgress] - Called with each progress object as it arrives
+ * @property {DockerRegistryAuth} [auth] - Registry authentication
+ * @property {(progress: DockerImagePullProgress) => void} [onProgress] - Called with each progress object as it arrives
  * @property {number} [timeoutMs] - Optional per-request timeout for the pull stream.
  */
 
@@ -33,6 +73,7 @@ class DockerImages {
    * @returns {Promise<void>}
    */
   async pull(options) {
+    /** @type {import("./docker-connection.js").DockerRequestHeaders} */
     const headers = {}
 
     if (options.auth) {
@@ -58,7 +99,7 @@ class DockerImages {
   /**
    * Inspect an image.
    * @param {{name: string, timeoutMs?: number}} options
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerImageInspectResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
@@ -71,7 +112,7 @@ class DockerImages {
   /**
    * Remove an image.
    * @param {{name: string, force?: boolean, timeoutMs?: number}} options
-   * @returns {Promise<object[]>}
+   * @returns {Promise<DockerImageDeleteResponse[]>}
    */
   async remove(options) {
     const query = options.force ? {force: true} : undefined
@@ -101,10 +142,11 @@ class DockerImages {
 
   /**
    * List images.
-   * @param {{filters?: object, timeoutMs?: number}} [options]
-   * @returns {Promise<object[]>}
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @returns {Promise<DockerImageListItem[]>}
    */
   async list(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.filters) query.filters = JSON.stringify(options.filters)
@@ -119,10 +161,11 @@ class DockerImages {
 
   /**
    * Prune unused images.
-   * @param {{filters?: object, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
    * @returns {Promise<{ImagesDeleted?: Array<{Deleted?: string, Untagged?: string}>, SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.filters) query.filters = JSON.stringify(options.filters)
@@ -140,7 +183,7 @@ class DockerImages {
    * with progress info. If any object contains an error field, throw it.
    * When onProgress is provided, each parsed JSON object is forwarded live.
    * @param {import("node:stream").Readable} stream
-   * @param {(progress: object) => void} [onProgress] - Called with each progress object as it arrives
+   * @param {(progress: DockerImagePullProgress) => void} [onProgress] - Called with each progress object as it arrives
    * @returns {Promise<void>}
    */
   consumePullStream(stream, onProgress) {

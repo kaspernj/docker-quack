@@ -74,7 +74,7 @@ export default class DockerImageTagger {
   /**
    * @param {string} name
    * @param {number} [timeoutMs]
-   * @returns {Promise<object>}
+   * @returns {Promise<import("./images.js").DockerImageInspectResponse>}
    */
   async inspectImage(name, timeoutMs) {
     return await this.connection.request({
@@ -87,7 +87,7 @@ export default class DockerImageTagger {
   /**
    * @param {string} name
    * @param {number} [timeoutMs]
-   * @returns {Promise<object[]>}
+   * @returns {Promise<import("./images.js").DockerImageDeleteResponse[]>}
    */
   async removeImage(name, timeoutMs) {
     return await this.connection.request({

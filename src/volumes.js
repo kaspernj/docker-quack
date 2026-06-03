@@ -1,3 +1,25 @@
+/**
+ * @typedef {object} DockerVolumeCreateOptions
+ * @property {string} Name - Volume name.
+ * @property {Record<string, string>} [Labels] - Volume labels.
+ * @property {number} [timeoutMs] - Optional per-request timeout for volume creation.
+ */
+
+/**
+ * @typedef {object} DockerVolumeResponse
+ * @property {string} [Name] - Volume name.
+ * @property {string} [Driver] - Volume driver.
+ * @property {string} [Mountpoint] - Host mountpoint.
+ * @property {string} [Scope] - Volume scope.
+ * @property {Record<string, string>} [Labels] - Volume labels.
+ */
+
+/**
+ * @typedef {object} DockerVolumeListResponse
+ * @property {DockerVolumeResponse[]} Volumes - Volumes returned by Docker.
+ * @property {string[]} Warnings - Docker warnings from the list request.
+ */
+
 /** Docker volumes API. */
 class DockerVolumes {
   /**
@@ -9,8 +31,8 @@ class DockerVolumes {
 
   /**
    * Create a volume.
-   * @param {{Name: string, Labels?: Record<string, string>, timeoutMs?: number}} options
-   * @returns {Promise<object>}
+   * @param {DockerVolumeCreateOptions} options
+   * @returns {Promise<DockerVolumeResponse>}
    */
   async create(options) {
     const {timeoutMs, ...body} = options
@@ -42,7 +64,7 @@ class DockerVolumes {
   /**
    * Inspect a volume.
    * @param {{name: string, timeoutMs?: number}} options
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerVolumeResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
@@ -54,10 +76,11 @@ class DockerVolumes {
 
   /**
    * List volumes.
-   * @param {{filters?: object, timeoutMs?: number}} [options]
-   * @returns {Promise<{Volumes: object[], Warnings: string[]}>}
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @returns {Promise<DockerVolumeListResponse>}
    */
   async list(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.filters) query.filters = JSON.stringify(options.filters)
@@ -72,10 +95,11 @@ class DockerVolumes {
 
   /**
    * Prune unused volumes.
-   * @param {{filters?: object, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
    * @returns {Promise<{VolumesDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.filters) query.filters = JSON.stringify(options.filters)
