@@ -3,6 +3,48 @@ import {createGzip} from "node:zlib"
 import DockerImageTagger from "./image-tagging.js"
 
 /**
+ * @typedef {object} DockerDeviceMapping
+ * @property {string} PathOnHost - Device path on the Docker host.
+ * @property {string} PathInContainer - Device path inside the container.
+ * @property {string} CgroupPermissions - Device cgroup permissions, such as `rwm`.
+ */
+
+/**
+ * @typedef {object} DockerPortBinding
+ * @property {string} [HostIp] - Host interface to bind.
+ * @property {string} [HostPort] - Host port to bind.
+ */
+
+/**
+ * @typedef {object} DockerRestartPolicy
+ * @property {string} [Name] - Docker restart policy name.
+ * @property {number} [MaximumRetryCount] - Maximum retries for `on-failure` policies.
+ */
+
+/**
+ * @typedef {object} DockerUlimit
+ * @property {string} Name - Ulimit name.
+ * @property {number} Soft - Soft limit value.
+ * @property {number} Hard - Hard limit value.
+ */
+
+/**
+ * @typedef {object} DockerContainerHostConfig
+ * @property {boolean} [AutoRemove] - Automatically remove the container after it exits.
+ * @property {string[]} [Binds] - Host bind mounts.
+ * @property {number} [CpuShares] - Relative CPU share weight.
+ * @property {DockerDeviceMapping[]} [Devices] - Host devices mapped into the container.
+ * @property {string[]} [ExtraHosts] - Additional host entries.
+ * @property {number} [Memory] - Memory limit in bytes.
+ * @property {number} [MemorySwap] - Total memory plus swap limit in bytes.
+ * @property {string} [NetworkMode] - Docker network mode.
+ * @property {Record<string, DockerPortBinding[]>} [PortBindings] - Published container port bindings.
+ * @property {boolean} [Privileged] - Whether the container runs in privileged mode.
+ * @property {DockerRestartPolicy} [RestartPolicy] - Container restart policy.
+ * @property {DockerUlimit[]} [Ulimits] - Container ulimit overrides.
+ */
+
+/**
  * @typedef {object} CreateContainerOptions
  * @property {string} [name] - Container name
  * @property {string} Image - Image to use
@@ -11,7 +53,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} [WorkingDir] - Working directory inside the container
  * @property {string} [User] - User inside the container
  * @property {object} [NetworkingConfig] - Network configuration
- * @property {object} [HostConfig] - Host configuration (binds, port bindings, etc.)
+ * @property {DockerContainerHostConfig} [HostConfig] - Host configuration (binds, port bindings, etc.)
  * @property {object} [ExposedPorts] - Exposed ports
  * @property {Record<string, string>} [Labels] - Container labels (key/value), passed through to the Engine container config.
  * @property {number} [timeoutMs] - Optional per-request timeout for the create request.
