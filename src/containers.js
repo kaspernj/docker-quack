@@ -78,10 +78,23 @@ import DockerImageTagger from "./image-tagging.js"
  */
 
 /**
+ * @typedef {object} DockerContainerMountPoint
+ * @property {string} [Type] - Mount type, such as `volume` or `bind`.
+ * @property {string} [Name] - Docker-managed volume name.
+ * @property {string} [Source] - Host source path or volume source.
+ * @property {string} [Destination] - Container destination path.
+ * @property {string} [Driver] - Volume driver.
+ * @property {string} [Mode] - Mount mode.
+ * @property {boolean} [RW] - Whether the mount is writable.
+ * @property {string} [Propagation] - Bind propagation mode.
+ */
+
+/**
  * @typedef {object} DockerContainerInspectResponse
  * @property {string} [Id] - Container ID.
  * @property {string} [Name] - Container name.
  * @property {Record<string, string>} [Labels] - Container labels.
+ * @property {DockerContainerMountPoint[]} [Mounts] - Container mount points.
  * @property {{Networks?: Record<string, DockerContainerEndpointSettings>}} [NetworkSettings] - Runtime network details.
  * @property {DockerContainerHostConfig} [HostConfig] - Host configuration reported by Docker.
  */
