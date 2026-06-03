@@ -1,3 +1,37 @@
+/**
+ * @typedef {object} DockerNetworkIPAMConfig
+ * @property {string} [Subnet] - Network subnet CIDR.
+ * @property {string} [IPRange] - Allocatable IP range CIDR.
+ * @property {string} [Gateway] - Gateway IP address.
+ * @property {Record<string, string>} [AuxAddress] - Auxiliary address assignments.
+ */
+
+/**
+ * @typedef {object} DockerNetworkIPAM
+ * @property {string} [Driver] - IPAM driver name.
+ * @property {DockerNetworkIPAMConfig[]} [Config] - IPAM configuration blocks.
+ * @property {Record<string, string>} [Options] - IPAM driver options.
+ */
+
+/**
+ * @typedef {object} DockerNetworkCreateOptions
+ * @property {string} Name - Network name.
+ * @property {string} [Driver] - Network driver name.
+ * @property {DockerNetworkIPAM} [IPAM] - IPAM configuration.
+ * @property {Record<string, string>} [Labels] - Network labels.
+ * @property {number} [timeoutMs] - Optional per-request timeout for network creation.
+ */
+
+/**
+ * @typedef {object} DockerNetworkResponse
+ * @property {string} [Id] - Network ID.
+ * @property {string} [Name] - Network name.
+ * @property {string} [Driver] - Network driver name.
+ * @property {string} [Scope] - Network scope.
+ * @property {Record<string, string>} [Labels] - Network labels.
+ * @property {DockerNetworkIPAM} [IPAM] - IPAM configuration reported by Docker.
+ */
+
 /** Docker networks API. */
 class DockerNetworks {
   /**
@@ -9,7 +43,7 @@ class DockerNetworks {
 
   /**
    * Create a network.
-   * @param {{Name: string, Driver?: string, IPAM?: object, Labels?: Record<string, string>, timeoutMs?: number}} options
+   * @param {DockerNetworkCreateOptions} options
    * @returns {Promise<{Id: string}>}
    */
   async create(options) {
@@ -39,7 +73,7 @@ class DockerNetworks {
   /**
    * Inspect a network.
    * @param {{id: string, timeoutMs?: number}} options
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerNetworkResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
@@ -51,10 +85,11 @@ class DockerNetworks {
 
   /**
    * List networks.
-   * @param {{filters?: object, timeoutMs?: number}} [options]
-   * @returns {Promise<object[]>}
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @returns {Promise<DockerNetworkResponse[]>}
    */
   async list(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.filters) query.filters = JSON.stringify(options.filters)
@@ -69,10 +104,11 @@ class DockerNetworks {
 
   /**
    * Prune unused networks.
-   * @param {{filters?: object, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
    * @returns {Promise<{NetworksDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.filters) query.filters = JSON.stringify(options.filters)

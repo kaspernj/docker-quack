@@ -3,6 +3,129 @@ import {createGzip} from "node:zlib"
 import DockerImageTagger from "./image-tagging.js"
 
 /**
+ * @typedef {object} DockerDeviceMapping
+ * @property {string} PathOnHost - Device path on the Docker host.
+ * @property {string} PathInContainer - Device path inside the container.
+ * @property {string} CgroupPermissions - Device cgroup permissions, such as `rwm`.
+ */
+
+/**
+ * @typedef {object} DockerPortBinding
+ * @property {string} [HostIp] - Host interface to bind.
+ * @property {string} [HostPort] - Host port to bind.
+ */
+
+/**
+ * @typedef {object} DockerRestartPolicy
+ * @property {string} [Name] - Docker restart policy name.
+ * @property {number} [MaximumRetryCount] - Maximum retries for `on-failure` policies.
+ */
+
+/**
+ * @typedef {object} DockerUlimit
+ * @property {string} Name - Ulimit name.
+ * @property {number} Soft - Soft limit value.
+ * @property {number} Hard - Hard limit value.
+ */
+
+/**
+ * @typedef {import("./docker-connection.js").DockerJsonValue | DockerDeviceMapping[] | DockerPortBinding[] | DockerRestartPolicy | DockerUlimit[] | Record<string, DockerPortBinding[]>} DockerHostConfigValue
+ */
+
+/**
+ * @typedef {object} DockerContainerHostConfigFields
+ * @property {boolean} [AutoRemove] - Automatically remove the container after it exits.
+ * @property {string[]} [Binds] - Host bind mounts.
+ * @property {number} [CpuShares] - Relative CPU share weight.
+ * @property {DockerDeviceMapping[]} [Devices] - Host devices mapped into the container.
+ * @property {string[]} [ExtraHosts] - Additional host entries.
+ * @property {number} [Memory] - Memory limit in bytes.
+ * @property {number} [MemorySwap] - Total memory plus swap limit in bytes.
+ * @property {string} [NetworkMode] - Docker network mode.
+ * @property {Record<string, DockerPortBinding[]>} [PortBindings] - Published container port bindings.
+ * @property {boolean} [Privileged] - Whether the container runs in privileged mode.
+ * @property {DockerRestartPolicy} [RestartPolicy] - Container restart policy.
+ * @property {DockerUlimit[]} [Ulimits] - Container ulimit overrides.
+ */
+
+/**
+ * @typedef {DockerContainerHostConfigFields & Record<string, DockerHostConfigValue>} DockerContainerHostConfig
+ */
+
+/**
+ * @typedef {object} DockerContainerEndpointSettings
+ * @property {string[]} [Aliases] - Network aliases for the container endpoint.
+ * @property {string[]} [Links] - Container links for the endpoint.
+ * @property {string} [NetworkID] - Docker network ID.
+ * @property {string} [EndpointID] - Docker endpoint ID.
+ * @property {string} [Gateway] - IPv4 gateway address.
+ * @property {string} [IPAddress] - IPv4 endpoint address.
+ * @property {number} [IPPrefixLen] - IPv4 prefix length.
+ * @property {string} [IPv6Gateway] - IPv6 gateway address.
+ * @property {string} [GlobalIPv6Address] - IPv6 endpoint address.
+ * @property {number} [GlobalIPv6PrefixLen] - IPv6 prefix length.
+ * @property {string} [MacAddress] - Endpoint MAC address.
+ */
+
+/**
+ * @typedef {object} DockerContainerNetworkingConfig
+ * @property {Record<string, DockerContainerEndpointSettings>} [EndpointsConfig] - Network-specific endpoint settings.
+ */
+
+/**
+ * @typedef {Record<string, Record<string, never>>} DockerContainerExposedPorts
+ */
+
+/**
+ * @typedef {object} DockerHealthcheckConfig
+ * @property {string[]} [Test] - Healthcheck command in Docker API form.
+ * @property {number} [Interval] - Healthcheck interval in nanoseconds.
+ * @property {number} [Timeout] - Healthcheck timeout in nanoseconds.
+ * @property {number} [StartPeriod] - Startup grace period in nanoseconds.
+ * @property {number} [Retries] - Number of retries before Docker marks the container unhealthy.
+ */
+
+/**
+ * @typedef {object} DockerContainerMountPoint
+ * @property {string} [Type] - Mount type, such as `volume` or `bind`.
+ * @property {string} [Name] - Docker-managed volume name.
+ * @property {string} [Source] - Host source path or volume source.
+ * @property {string} [Destination] - Container destination path.
+ * @property {string} [Driver] - Volume driver.
+ * @property {string} [Mode] - Mount mode.
+ * @property {boolean} [RW] - Whether the mount is writable.
+ * @property {string} [Propagation] - Bind propagation mode.
+ */
+
+/**
+ * @typedef {object} DockerContainerInspectResponse
+ * @property {string} [Id] - Container ID.
+ * @property {string} [Name] - Container name.
+ * @property {Record<string, string>} [Labels] - Container labels.
+ * @property {DockerContainerMountPoint[]} [Mounts] - Container mount points.
+ * @property {{Networks?: Record<string, DockerContainerEndpointSettings>}} [NetworkSettings] - Runtime network details.
+ * @property {DockerContainerHostConfig} [HostConfig] - Host configuration reported by Docker.
+ */
+
+/**
+ * @typedef {object} DockerContainerListItem
+ * @property {string} [Id] - Container ID.
+ * @property {string[]} [Names] - Container names.
+ * @property {string} [Image] - Image reference.
+ * @property {string} [ImageID] - Image ID.
+ * @property {string} [Command] - Container command.
+ * @property {number} [Created] - Creation time as a Unix timestamp.
+ * @property {Record<string, string>} [Labels] - Container labels.
+ * @property {string} [State] - Container state.
+ * @property {string} [Status] - Human-readable container status.
+ */
+
+/**
+ * @typedef {object} DockerContainerStatsResponse
+ * @property {{usage?: number, limit?: number}} [memory_stats] - One-shot memory usage data.
+ */
+
+/**
  * @typedef {object} CreateContainerOptions
  * @property {string} [name] - Container name
  * @property {string} Image - Image to use
@@ -10,9 +133,11 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string[]} [Env] - Environment variables
  * @property {string} [WorkingDir] - Working directory inside the container
  * @property {string} [User] - User inside the container
- * @property {object} [NetworkingConfig] - Network configuration
- * @property {object} [HostConfig] - Host configuration (binds, port bindings, etc.)
- * @property {object} [ExposedPorts] - Exposed ports
+ * @property {string[]} [Entrypoint] - Entrypoint command.
+ * @property {DockerContainerNetworkingConfig} [NetworkingConfig] - Network configuration
+ * @property {DockerContainerHostConfig} [HostConfig] - Host configuration (binds, port bindings, etc.)
+ * @property {DockerContainerExposedPorts} [ExposedPorts] - Exposed ports
+ * @property {DockerHealthcheckConfig} [Healthcheck] - Container healthcheck configuration.
  * @property {Record<string, string>} [Labels] - Container labels (key/value), passed through to the Engine container config.
  * @property {number} [timeoutMs] - Optional per-request timeout for the create request.
  */
@@ -38,6 +163,21 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {number} exitCode - Exit code of the command
  * @property {string} stdout - Standard output
  * @property {string} stderr - Standard error
+ */
+
+/**
+ * @typedef {object} DockerExecCreateResponse
+ * @property {string} Id - Docker exec instance ID.
+ */
+
+/**
+ * @typedef {object} DockerExecInspectResponse
+ * @property {number} ExitCode - Exec command exit code.
+ */
+
+/**
+ * @typedef {object} DockerCommitResponse
+ * @property {string} Id - Committed image ID.
  */
 
 /**
@@ -144,7 +284,7 @@ class DockerContainers {
   /**
    * Inspect a container.
    * @param {{id: string, timeoutMs?: number}} options
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerContainerInspectResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
@@ -198,6 +338,7 @@ class DockerContainers {
     if (options.Env) execBody.Env = options.Env
     if (options.User) execBody.User = options.User
 
+    /** @type {DockerExecCreateResponse} */
     const execCreate = await this.connection.request({
       method: "POST",
       path: `/containers/${options.id}/exec`,
@@ -219,6 +360,7 @@ class DockerContainers {
     const {stdout, stderr} = await this.demuxStream(stream, options.onOutput)
 
     // Step 3: Inspect exec to get exit code
+    /** @type {DockerExecInspectResponse} */
     const execInspect = await this.connection.request({
       method: "GET",
       path: `/exec/${execId}/json`,
@@ -238,9 +380,10 @@ class DockerContainers {
    * Docker versions that reject `/commit?repo=...&tag=...` for existing target
    * tags still behave like `docker commit && docker tag`.
    * @param {CommitOptions} options
-   * @returns {Promise<{Id: string}>}
+   * @returns {Promise<DockerCommitResponse>}
    */
   async commit(options) {
+    /** @type {DockerCommitResponse} */
     const result = await this.connection.request({
       method: "POST",
       path: "/commit",
@@ -327,10 +470,11 @@ class DockerContainers {
 
   /**
    * List containers.
-   * @param {{all?: boolean, filters?: object, timeoutMs?: number}} [options]
-   * @returns {Promise<object[]>}
+   * @param {{all?: boolean, filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @returns {Promise<DockerContainerListItem[]>}
    */
   async list(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.all) query.all = true
@@ -346,10 +490,11 @@ class DockerContainers {
 
   /**
    * Prune stopped containers.
-   * @param {{filters?: object, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
    * @returns {Promise<{ContainersDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
+    /** @type {import("./docker-connection.js").DockerQuery} */
     const query = {}
 
     if (options.filters) query.filters = JSON.stringify(options.filters)
@@ -365,7 +510,7 @@ class DockerContainers {
   /**
    * Get one-shot container stats (no streaming).
    * @param {{id: string, timeoutMs?: number}} options
-   * @returns {Promise<object>}
+   * @returns {Promise<DockerContainerStatsResponse>}
    */
   async stats(options) {
     return await this.connection.request({
