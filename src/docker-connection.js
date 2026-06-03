@@ -171,19 +171,20 @@ class DockerConnection {
 
   /**
    * Perform an HTTP request and return the parsed JSON response.
+   * @template {DockerJsonValue} T
    * @param {RequestOptions} options
-   * @returns {Promise<any>}
+   * @returns {Promise<T>}
    */
   async request(options) {
     const buffer = await this.requestRaw(options)
     const text = buffer.toString("utf-8")
 
-    if (!text) return null
+    if (!text) return /** @type {T} */ (null)
 
     try {
-      return JSON.parse(text)
+      return /** @type {T} */ (JSON.parse(text))
     } catch {
-      return text
+      return /** @type {T} */ (text)
     }
   }
 

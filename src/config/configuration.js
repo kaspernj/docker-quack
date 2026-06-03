@@ -3,7 +3,7 @@ import SqliteDriver from "velocious/build/src/database/drivers/sqlite/index.js"
 import VelociousConfiguration from "velocious/build/src/configuration.js"
 import VelociousEnvironmentHandlerNode from "velocious/build/src/environment-handlers/node.js"
 
-const configuration = new VelociousConfiguration(/** @type {any} */ ({
+const configuration = new VelociousConfiguration({
   database: {
     test: {
       default: {
@@ -16,7 +16,11 @@ const configuration = new VelociousConfiguration(/** @type {any} */ ({
   },
   directory: new URL("../..", import.meta.url).pathname.replace(/\/$/, ""),
   environment: "test",
-  environmentHandler: new VelociousEnvironmentHandlerNode()
-}))
+  environmentHandler: new VelociousEnvironmentHandlerNode(),
+  initializeModels: () => {},
+  locale: "en",
+  localeFallbacks: {},
+  locales: ["en"]
+})
 
 export default configuration

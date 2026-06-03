@@ -158,6 +158,21 @@ import DockerImageTagger from "./image-tagging.js"
  */
 
 /**
+ * @typedef {object} DockerExecCreateResponse
+ * @property {string} Id - Docker exec instance ID.
+ */
+
+/**
+ * @typedef {object} DockerExecInspectResponse
+ * @property {number} ExitCode - Exec command exit code.
+ */
+
+/**
+ * @typedef {object} DockerCommitResponse
+ * @property {string} Id - Committed image ID.
+ */
+
+/**
  * @typedef {object} CommitOptions
  * @property {string} id - Container ID
  * @property {string} [repo] - Optional image repository to tag after the commit
@@ -315,6 +330,7 @@ class DockerContainers {
     if (options.Env) execBody.Env = options.Env
     if (options.User) execBody.User = options.User
 
+    /** @type {DockerExecCreateResponse} */
     const execCreate = await this.connection.request({
       method: "POST",
       path: `/containers/${options.id}/exec`,
@@ -336,6 +352,7 @@ class DockerContainers {
     const {stdout, stderr} = await this.demuxStream(stream, options.onOutput)
 
     // Step 3: Inspect exec to get exit code
+    /** @type {DockerExecInspectResponse} */
     const execInspect = await this.connection.request({
       method: "GET",
       path: `/exec/${execId}/json`,
@@ -355,9 +372,10 @@ class DockerContainers {
    * Docker versions that reject `/commit?repo=...&tag=...` for existing target
    * tags still behave like `docker commit && docker tag`.
    * @param {CommitOptions} options
-   * @returns {Promise<{Id: string}>}
+   * @returns {Promise<DockerCommitResponse>}
    */
   async commit(options) {
+    /** @type {DockerCommitResponse} */
     const result = await this.connection.request({
       method: "POST",
       path: "/commit",
