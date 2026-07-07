@@ -701,6 +701,18 @@ describe("DockerContainers", () => {
     ])
   })
 
+  it("exec() ignores numeric inspect exit codes while Docker still reports the exec running", async () => {
+    const connection = new FakeExecInspectConnection([
+      {ExitCode: 0, Running: true},
+      {ExitCode: 7, Running: false}
+    ])
+    const containers = new DockerContainers(connection)
+
+    const result = await containers.exec({id: "container-123", Cmd: ["false"]})
+
+    expect(result.exitCode).toEqual(7)
+  })
+
   it("exec() throws an explicit error when Docker inspect never reports an exit code", async () => {
     const connection = new FakeExecInspectConnection([
       {ExitCode: null, Running: true},

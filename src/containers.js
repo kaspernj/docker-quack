@@ -411,7 +411,7 @@ class DockerContainers {
         timeoutMs
       })
 
-      if (typeof execInspect.ExitCode === "number") {
+      if (typeof execInspect.ExitCode === "number" && execInspect.Running !== true) {
         return /** @type {DockerExecInspectResponse & {ExitCode: number}} */ (execInspect)
       }
 
