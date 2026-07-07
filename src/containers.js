@@ -159,6 +159,12 @@ import DockerImageTagger from "./image-tagging.js"
  */
 
 /**
+ * @typedef {object} DockerContainersOptions
+ * @property {number} [execInspectPollAttempts] - Maximum inspect attempts after an exec stream closes without a numeric exit code.
+ * @property {number} [execInspectPollIntervalMs] - Delay between incomplete exec inspect attempts.
+ */
+
+/**
  * @typedef {object} ExecResult
  * @property {number} exitCode - Exit code of the command
  * @property {string} stdout - Standard output
@@ -172,7 +178,8 @@ import DockerImageTagger from "./image-tagging.js"
 
 /**
  * @typedef {object} DockerExecInspectResponse
- * @property {number} ExitCode - Exec command exit code.
+ * @property {number | null} ExitCode - Exec command exit code.
+ * @property {boolean} [Running] - Whether Docker still considers the exec command running.
  */
 
 /**
@@ -190,13 +197,34 @@ import DockerImageTagger from "./image-tagging.js"
  */
 
 /** Docker containers API. */
+const DEFAULT_EXEC_INSPECT_POLL_ATTEMPTS = 20
+const DEFAULT_EXEC_INSPECT_POLL_INTERVAL_MS = 100
+
+export class DockerExecIncompleteError extends Error {
+  /**
+   * @param {{execId: string, inspect: DockerExecInspectResponse | null}} args
+   */
+  constructor({execId, inspect}) {
+    const running = inspect?.Running === undefined ? "unknown" : String(inspect.Running)
+    const exitCode = inspect?.ExitCode === undefined || inspect.ExitCode === null ? "null" : String(inspect.ExitCode)
+
+    super(`Docker exec ${execId} did not report an exit code after the output stream ended (Running=${running}, ExitCode=${exitCode}). The Docker exec stream may have ended before the command completed.`)
+    this.name = "DockerExecIncompleteError"
+    this.execId = execId
+    this.inspect = inspect
+  }
+}
+
 class DockerContainers {
   /**
    * @param {import("./docker-connection.js").default} connection
+   * @param {DockerContainersOptions} [options]
    */
-  constructor(connection) {
+  constructor(connection, options = {}) {
     this.connection = connection
     this.imageTagger = new DockerImageTagger(connection)
+    this.execInspectPollAttempts = options.execInspectPollAttempts ?? DEFAULT_EXEC_INSPECT_POLL_ATTEMPTS
+    this.execInspectPollIntervalMs = options.execInspectPollIntervalMs ?? DEFAULT_EXEC_INSPECT_POLL_INTERVAL_MS
   }
 
   /**
@@ -359,19 +387,54 @@ class DockerContainers {
 
     const {stdout, stderr} = await this.demuxStream(stream, options.onOutput)
 
-    // Step 3: Inspect exec to get exit code
-    /** @type {DockerExecInspectResponse} */
-    const execInspect = await this.connection.request({
-      method: "GET",
-      path: `/exec/${execId}/json`,
-      timeoutMs: options.timeoutMs
-    })
+    const execInspect = await this.inspectExecUntilComplete({execId, timeoutMs: options.timeoutMs})
 
     return {
       exitCode: execInspect.ExitCode,
       stdout,
       stderr
     }
+  }
+
+  /**
+   * @param {{execId: string, timeoutMs?: number}} args
+   * @returns {Promise<DockerExecInspectResponse & {ExitCode: number}>}
+   */
+  async inspectExecUntilComplete({execId, timeoutMs}) {
+    /** @type {DockerExecInspectResponse | null} */
+    let execInspect = null
+
+    for (let attempt = 1; attempt <= this.execInspectPollAttempts; attempt++) {
+      execInspect = await this.connection.request({
+        method: "GET",
+        path: `/exec/${execId}/json`,
+        timeoutMs
+      })
+
+      if (typeof execInspect.ExitCode === "number") {
+        return /** @type {DockerExecInspectResponse & {ExitCode: number}} */ (execInspect)
+      }
+
+      if (execInspect.Running === false) {
+        break
+      }
+
+      if (attempt < this.execInspectPollAttempts) {
+        await this.wait(this.execInspectPollIntervalMs)
+      }
+    }
+
+    throw new DockerExecIncompleteError({execId, inspect: execInspect})
+  }
+
+  /**
+   * @param {number} ms
+   * @returns {Promise<void>}
+   */
+  async wait(ms) {
+    if (ms <= 0) return
+
+    await new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   /**
