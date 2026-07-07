@@ -61,10 +61,12 @@ describe("Docker", () => {
     const docker = new Docker(connection)
     const timeoutMs = 45_000
 
+    await docker.ping({timeoutMs})
     await docker.version({timeoutMs})
     await docker.info({timeoutMs})
 
     expect(connection.calls.map((call) => [call.method, call.path, call.timeoutMs])).toEqual([
+      ["GET", "/_ping", timeoutMs],
       ["GET", "/version", timeoutMs],
       ["GET", "/info", timeoutMs]
     ])
