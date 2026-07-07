@@ -42,6 +42,14 @@ const docker = Docker.open({
   port: 2376,
   tls: {ca: caCert, cert: clientCert, key: clientKey}
 })
+
+// Connect through a custom Node HTTP agent or socket factory
+const dockerViaAgent = Docker.open({host: "docker-host", port: 2375, agent: customHttpAgent})
+const dockerViaFactory = Docker.open({
+  host: "docker-host",
+  port: 2375,
+  createConnection: (_options, callback) => customSocketFactory(callback)
+})
 ```
 
 ### Timeouts

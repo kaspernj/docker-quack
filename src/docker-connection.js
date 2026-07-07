@@ -2,6 +2,7 @@ import {Readable} from "node:stream"
 import * as zlib from "node:zlib"
 import SnapReq from "snapreq"
 import {SnapReqTimeoutError} from "snapreq/errors"
+import CustomNodeTransport from "./custom-node-transport.js"
 
 /**
  * @typedef {string | number | boolean | null} DockerJsonScalar
@@ -52,6 +53,11 @@ import {SnapReqTimeoutError} from "snapreq/errors"
  * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {TlsOptions} [tls] - TLS options for HTTPS connections
  * @property {number} [timeoutMs] - Per-request timeout for buffered requests. An unreachable host that accepts the connection but never responds would otherwise hang forever. Defaults to 120000ms. Set to 0 to disable.
+ * @property {import("node:http").Agent} [agent] - Custom HTTP agent for callers that need to supply their own socket transport.
+ * @property {import("node:https").Agent} [httpsAgent] - Custom HTTPS agent for callers that need to supply their own socket transport.
+ * @property {import("./custom-node-transport.js").CreateConnection} [createConnection] - Custom HTTP socket factory used to build an internal agent.
+ * @property {import("./custom-node-transport.js").CreateConnection} [createTlsConnection] - Custom HTTPS socket factory used to build an internal agent.
+ * @property {import("snapreq/transports/select").TransportName | import("snapreq/transports/select").Transport} [transport] - SnapReq transport override for advanced integrations.
  */
 
 /**
@@ -137,12 +143,37 @@ class DockerConnection {
     const urlHost = this.host && this.host.includes(":") && !this.host.startsWith("[") ? `[${this.host}]` : this.host
     const baseUrl = this.socketPath ? `${protocol}://localhost` : `${protocol}://${urlHost}:${this.port}`
 
+    const transport = this.transport(options)
+
     this.client = new SnapReq({
       baseUrl,
       socketPath: this.socketPath,
       tls: options.tls,
-      keepAlive: true
+      keepAlive: true,
+      transport
     })
+  }
+
+  /**
+   * @param {ConnectionOptions} options
+   * @returns {import("snapreq/transports/select").TransportName | import("snapreq/transports/select").Transport | undefined}
+   */
+  transport(options) {
+    if (options.transport) return options.transport
+
+    if (options.agent || options.httpsAgent || options.createConnection || options.createTlsConnection) {
+      return new CustomNodeTransport({
+        socketPath: options.socketPath,
+        tls: options.tls,
+        keepAlive: true,
+        agent: options.agent,
+        httpsAgent: options.httpsAgent,
+        createConnection: options.createConnection,
+        createTlsConnection: options.createTlsConnection
+      })
+    }
+
+    return undefined
   }
 
   /**
