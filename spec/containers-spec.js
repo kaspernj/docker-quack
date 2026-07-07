@@ -5,6 +5,21 @@ import Docker from "../src/index.js"
 import DockerContainers from "../src/containers.js"
 import FakeDockerConnection from "./support/fake-docker-connection.js"
 
+class FakeExecInspectConnection extends FakeDockerConnection {
+  constructor(inspectResponses) {
+    super()
+    this.inspectResponses = inspectResponses
+  }
+
+  responseFor(options) {
+    if (options.path === "/exec/exec-123/json") {
+      return this.inspectResponses.shift() || {ExitCode: null, Running: true}
+    }
+
+    return super.responseFor(options)
+  }
+}
+
 function createMockServer(handler) {
   return new Promise((resolve) => {
     const server = http.createServer(handler)
@@ -666,6 +681,48 @@ describe("DockerContainers", () => {
       docker.close()
       server.close()
     }
+  })
+
+  it("exec() waits for Docker inspect to report the exec exit code after the stream closes", async () => {
+    const connection = new FakeExecInspectConnection([
+      {ExitCode: null, Running: true},
+      {ExitCode: 7, Running: false}
+    ])
+    const containers = new DockerContainers(connection)
+
+    const result = await containers.exec({id: "container-123", Cmd: ["false"]})
+
+    expect(result.exitCode).toEqual(7)
+    expect(connection.calls.map((call) => call.path)).toEqual([
+      "/containers/container-123/exec",
+      "/exec/exec-123/start",
+      "/exec/exec-123/json",
+      "/exec/exec-123/json"
+    ])
+  })
+
+  it("exec() ignores numeric inspect exit codes while Docker still reports the exec running", async () => {
+    const connection = new FakeExecInspectConnection([
+      {ExitCode: 0, Running: true},
+      {ExitCode: 7, Running: false}
+    ])
+    const containers = new DockerContainers(connection)
+
+    const result = await containers.exec({id: "container-123", Cmd: ["false"]})
+
+    expect(result.exitCode).toEqual(7)
+  })
+
+  it("exec() throws an explicit error when Docker inspect never reports an exit code", async () => {
+    const connection = new FakeExecInspectConnection([
+      {ExitCode: null, Running: true},
+      {ExitCode: null, Running: true},
+      {ExitCode: null, Running: true}
+    ])
+    const containers = new DockerContainers(connection, {execInspectPollAttempts: 3, execInspectPollIntervalMs: 0})
+
+    await expect(async () => await containers.exec({id: "container-123", Cmd: ["npm", "test"]}))
+      .toThrow("Docker exec exec-123 did not report an exit code after the output stream ended (Running=true, ExitCode=null). The Docker exec stream may have ended before the command completed.")
   })
 
   it("logs() with onOutput streams frames without buffering", async () => {
