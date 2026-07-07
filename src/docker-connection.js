@@ -133,7 +133,7 @@ class DockerConnection {
     this.port = options.port
     this.socketPath = options.socketPath
     this.tls = options.tls
-    this.useTls = !!options.tls
+    this.useTls = !!options.tls || !!options.httpsAgent || !!options.createTlsConnection
     this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
 
     const protocol = this.useTls ? "https" : "http"

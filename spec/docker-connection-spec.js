@@ -143,7 +143,37 @@ describe("DockerConnection", () => {
     }
   })
 
-  it("forwards an explicit SnapReq transport override", () => {
+  it("treats an HTTPS agent as a TLS connection", () => {
+    const httpsAgent = new http.Agent({keepAlive: false})
+    const connection = new DockerConnection({host: "docker.invalid", port: 2376, httpsAgent})
+
+    try {
+      expect(connection.useTls).toEqual(true)
+      expect(connection.client.baseUrl).toEqual("https://docker.invalid:2376")
+    } finally {
+      connection.close()
+      httpsAgent.destroy()
+    }
+  })
+
+  it("treats a TLS socket factory as a TLS connection", () => {
+    const connection = new DockerConnection({
+      host: "docker.invalid",
+      port: 2376,
+      createTlsConnection() {
+        return net.connect({host: "127.0.0.1", port: 9})
+      }
+    })
+
+    try {
+      expect(connection.useTls).toEqual(true)
+      expect(connection.client.baseUrl).toEqual("https://docker.invalid:2376")
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("forwards an explicit SnapReq transport override", async () => {
     const transport = {
       capabilities: {},
       async performRequest() {
