@@ -88,6 +88,19 @@ class Docker {
   }
 
   /**
+   * Ping the Docker daemon.
+   * @param {CommandOptions} [options]
+   * @returns {Promise<string>}
+   */
+  async ping(options = {}) {
+    return await this.connection.request({
+      method: "GET",
+      path: "/_ping",
+      timeoutMs: options.timeoutMs
+    })
+  }
+
+  /**
    * Get Docker system information.
    * @param {CommandOptions} [options]
    * @returns {Promise<DockerInfoResponse>}
