@@ -18,6 +18,7 @@ Docker Engine API client with HTTP keep-alive for Node.js.
 - Image tagging handles existing destination tags idempotently
 - TLS client certificate support
 - Configurable timeouts for Docker API requests and high-level commands
+- Optional Seamline HTTP agent helper for resilient Docker transports
 
 ## Installation
 
@@ -41,6 +42,26 @@ const docker = Docker.open({
   host: "docker-host",
   port: 2376,
   tls: {ca: caCert, cert: clientCert, key: clientKey}
+})
+
+// Connect through a custom Node HTTP agent or socket factory
+const dockerViaAgent = Docker.open({host: "docker-host", port: 2375, agent: customHttpAgent})
+const dockerViaFactory = Docker.open({
+  host: "docker-host",
+  port: 2375,
+  createConnection: (_options, callback) => customSocketFactory(callback)
+})
+
+// Connect through Seamline without making Seamline a hard docker-quack dependency
+import {SeamlineHttpAgent} from "seamline/http"
+import {openDockerOverSeamline} from "docker-quack/src/seamline.js"
+
+const dockerViaSeamline = openDockerOverSeamline({
+  SeamlineHttpAgent,
+  relay: {host: "relay.example.internal", port: 3100, token: process.env.SEAMLINE_TOKEN},
+  target: {host: "docker-socket-shim", port: 2375},
+  spoolDirectory: "/var/lib/my-app/seamline-spool",
+  sessionNamePrefix: "my-app-docker"
 })
 ```
 

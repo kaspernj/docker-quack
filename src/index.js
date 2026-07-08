@@ -38,6 +38,11 @@ import DockerVolumes from "./volumes.js"
  * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {import("./docker-connection.js").TlsOptions} [tls] - TLS options for HTTPS connections
  * @property {number} [timeoutMs] - Per-request timeout for buffered Docker API requests
+ * @property {import("node:http").Agent} [agent] - Custom HTTP agent, for example an agent that opens sockets through a tunnel
+ * @property {import("node:https").Agent} [httpsAgent] - Custom HTTPS agent
+ * @property {import("./custom-node-transport.js").CreateConnection} [createConnection] - Custom HTTP socket factory used to build an internal agent
+ * @property {import("./custom-node-transport.js").CreateConnection} [createTlsConnection] - Custom HTTPS socket factory used to build an internal agent
+ * @property {import("snapreq/transports/select").TransportName | import("snapreq/transports/select").Transport} [transport] - SnapReq transport override
  */
 
 /**
@@ -78,6 +83,19 @@ class Docker {
     return await this.connection.request({
       method: "GET",
       path: "/version",
+      timeoutMs: options.timeoutMs
+    })
+  }
+
+  /**
+   * Ping the Docker daemon.
+   * @param {CommandOptions} [options]
+   * @returns {Promise<string>}
+   */
+  async ping(options = {}) {
+    return await this.connection.request({
+      method: "GET",
+      path: "/_ping",
       timeoutMs: options.timeoutMs
     })
   }

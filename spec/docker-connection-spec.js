@@ -1,4 +1,5 @@
 import http from "node:http"
+import net from "node:net"
 import * as zlib from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import DockerConnection from "../src/docker-connection.js"
@@ -72,6 +73,117 @@ describe("DockerConnection", () => {
     try {
       expect(connection.socketPath).toEqual("/var/run/docker.sock")
       expect(connection.useTls).toEqual(false)
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("routes buffered requests through a custom HTTP agent", async () => {
+    let createConnectionCalls = 0
+    let capturedRequest = null
+
+    const server = http.createServer((req, res) => {
+      capturedRequest = {method: req.method, url: req.url, host: req.headers.host}
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({ApiVersion: "1.45"}))
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const agent = new http.Agent({keepAlive: false})
+
+    agent.createConnection = (_options, callback) => {
+      createConnectionCalls += 1
+      return net.connect({host: "127.0.0.1", port}, callback)
+    }
+    const connection = new DockerConnection({host: "docker.invalid", port: 2375, agent})
+
+    try {
+      const result = await connection.request({method: "GET", path: "/version"})
+
+      expect(result.ApiVersion).toEqual("1.45")
+      expect(capturedRequest.method).toEqual("GET")
+      expect(capturedRequest.url).toEqual("/version")
+      expect(capturedRequest.host).toEqual("docker.invalid:2375")
+      expect(createConnectionCalls).toEqual(1)
+    } finally {
+      connection.close()
+      agent.destroy()
+      server.close()
+    }
+  })
+
+  it("routes buffered requests through a custom createConnection factory", async () => {
+    let createConnectionCalls = 0
+
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({ApiVersion: "1.46"}))
+    })
+
+    await new Promise((resolve) => server.listen(0, resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({
+      host: "docker.invalid",
+      port: 2375,
+      createConnection(_options, callback) {
+        createConnectionCalls += 1
+        return net.connect({host: "127.0.0.1", port}, callback)
+      }
+    })
+
+    try {
+      const result = await connection.request({method: "GET", path: "/version"})
+
+      expect(result.ApiVersion).toEqual("1.46")
+      expect(createConnectionCalls).toEqual(1)
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("treats an HTTPS agent as a TLS connection", () => {
+    const httpsAgent = new http.Agent({keepAlive: false})
+    const connection = new DockerConnection({host: "docker.invalid", port: 2376, httpsAgent})
+
+    try {
+      expect(connection.useTls).toEqual(true)
+      expect(connection.client.baseUrl).toEqual("https://docker.invalid:2376")
+    } finally {
+      connection.close()
+      httpsAgent.destroy()
+    }
+  })
+
+  it("treats a TLS socket factory as a TLS connection", () => {
+    const connection = new DockerConnection({
+      host: "docker.invalid",
+      port: 2376,
+      createTlsConnection() {
+        return net.connect({host: "127.0.0.1", port: 9})
+      }
+    })
+
+    try {
+      expect(connection.useTls).toEqual(true)
+      expect(connection.client.baseUrl).toEqual("https://docker.invalid:2376")
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("forwards an explicit SnapReq transport override", async () => {
+    const transport = {
+      capabilities: {},
+      async performRequest() {
+        throw new Error("not used")
+      }
+    }
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375, transport})
+
+    try {
+      expect(connection.client._transportPreference).toEqual(transport)
     } finally {
       connection.close()
     }
