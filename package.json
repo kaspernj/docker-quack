@@ -5,11 +5,12 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "lint": "eslint src spec",
+    "lint": "npm run eslint && npm run typecheck",
     "test": "velocious test spec --ignore spec/integration",
     "test:integration": "velocious test spec/integration",
     "typecheck": "tsc --noEmit",
-    "release:patch": "release-patch"
+    "release:patch": "release-patch",
+    "eslint": "eslint src spec"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -24,6 +25,6 @@
     "velocious": "^1.0.343"
   },
   "dependencies": {
-    "snapreq": "^0.0.4"
+    "snapreq": "^0.0.9"
   }
 }
