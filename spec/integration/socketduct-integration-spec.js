@@ -5,7 +5,7 @@ import {join} from "node:path"
 import {setTimeout as delay} from "node:timers/promises"
 import {pathToFileURL} from "node:url"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
-import {openDockerOverSeamline} from "../../src/seamline.js"
+import {openDockerOverSocketduct} from "../../src/socketduct.js"
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -36,19 +36,19 @@ async function closeServer(server) {
   })
 }
 
-async function loadSeamline(repoPath) {
-  const seamlineUrl = pathToFileURL(join(repoPath, "src/index.js")).href
+async function loadSocketduct(repoPath) {
+  const socketductUrl = pathToFileURL(join(repoPath, "src/index.js")).href
   const authUrl = pathToFileURL(join(repoPath, "src/auth/user-store.js")).href
   const relayUrl = pathToFileURL(join(repoPath, "src/proxy/tcp-relay.js")).href
   const sessionUrl = pathToFileURL(join(repoPath, "src/sessions/session.js")).href
-  const [seamline, auth, relay, session] = await Promise.all([
-    import(seamlineUrl),
+  const [socketduct, auth, relay, session] = await Promise.all([
+    import(socketductUrl),
     import(authUrl),
     import(relayUrl),
     import(sessionUrl)
   ])
 
-  return {seamline, auth, relay, session}
+  return {socketduct, auth, relay, session}
 }
 
 function dockerFrame(streamType, data) {
@@ -79,10 +79,10 @@ async function waitUntil(predicate) {
   throw new Error("Timed out waiting for streaming callback")
 }
 
-async function createDockerOverSeamline(targetServer) {
+async function createDockerOverSocketduct(targetServer) {
   const targetPort = await listen(targetServer)
-  const {seamline, auth, relay, session} = await loadSeamline(process.env.SEAMLINE_REPO)
-  const spoolDirectory = await mkdtemp(join(tmpdir(), "docker-quack-seamline-"))
+  const {socketduct, auth, relay, session} = await loadSocketduct(process.env.SOCKETDUCT_REPO)
+  const spoolDirectory = await mkdtemp(join(tmpdir(), "docker-quack-socketduct-"))
   const users = new auth.InMemoryUserStore()
   const tokens = new auth.TokenStore({now: () => 1000, tokenTtlMs: 60_000})
   await users.createUser({username: "docker-quack", password: "test-password"})
@@ -92,8 +92,8 @@ async function createDockerOverSeamline(targetServer) {
     tokens,
     sessions: new session.SessionStore({now: () => 1000})
   })
-  const docker = openDockerOverSeamline({
-    SeamlineHttpAgent: seamline.SeamlineHttpAgent,
+  const docker = openDockerOverSocketduct({
+    SocketductHttpAgent: socketduct.SocketductHttpAgent,
     relay: {host: "127.0.0.1", port: relayHandle.port, token: token.value},
     target: {host: "127.0.0.1", port: targetPort},
     dockerHost: "docker",
@@ -113,9 +113,9 @@ async function createDockerOverSeamline(targetServer) {
   }
 }
 
-if (process.env.SEAMLINE_REPO) {
-  describe("docker-quack over Seamline", () => {
-    it("requests /_ping and /version through a Seamline relay", async () => {
+if (process.env.SOCKETDUCT_REPO) {
+  describe("docker-quack over Socketduct", () => {
+    it("requests /_ping and /version through a Socketduct relay", async () => {
       const requests = []
       const targetServer = http.createServer((req, res) => {
         requests.push({method: req.method, url: req.url, host: req.headers.host})
@@ -134,7 +134,7 @@ if (process.env.SEAMLINE_REPO) {
         res.writeHead(404)
         res.end("missing")
       })
-      const harness = await createDockerOverSeamline(targetServer)
+      const harness = await createDockerOverSocketduct(targetServer)
 
       try {
         expect(await harness.docker.ping()).toEqual("OK")
@@ -149,7 +149,7 @@ if (process.env.SEAMLINE_REPO) {
       }
     })
 
-    it("streams chunked Docker logs over Seamline without buffering until response end", async () => {
+    it("streams chunked Docker logs over Socketduct without buffering until response end", async () => {
       const events = []
       const targetServer = http.createServer((req, res) => {
         events.push(`request:${req.method}:${req.url}`)
@@ -173,7 +173,7 @@ if (process.env.SEAMLINE_REPO) {
         res.writeHead(404)
         res.end("missing")
       })
-      const harness = await createDockerOverSeamline(targetServer)
+      const harness = await createDockerOverSocketduct(targetServer)
 
       try {
         const result = await harness.docker.containers.logs({
@@ -194,7 +194,7 @@ if (process.env.SEAMLINE_REPO) {
       }
     })
 
-    it("streams exec raw multiplexed output over Seamline and inspects the exit code", async () => {
+    it("streams exec raw multiplexed output over Socketduct and inspects the exit code", async () => {
       const requests = []
       const streamed = []
       const targetServer = http.createServer((req, res) => {
@@ -223,7 +223,7 @@ if (process.env.SEAMLINE_REPO) {
         res.writeHead(404)
         res.end("missing")
       })
-      const harness = await createDockerOverSeamline(targetServer)
+      const harness = await createDockerOverSocketduct(targetServer)
 
       try {
         const result = await harness.docker.containers.exec({
