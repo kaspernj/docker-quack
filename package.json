@@ -21,7 +21,7 @@
     "release-patch": "^1.0.0",
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "velocious": "^1.0.343"
   },
   "dependencies": {
