@@ -55,6 +55,28 @@ describe("DockerNetworks", () => {
     ])
   })
 
+  it("forwards signal to every network command request without leaking it into the body", async () => {
+    const connection = new FakeDockerConnection()
+    const networks = new DockerNetworks(connection)
+    const signal = new AbortController().signal
+
+    await networks.create({Name: "my-network", Driver: "bridge", signal})
+    await networks.remove({id: "network-123", signal})
+    await networks.inspect({id: "network-123", signal})
+    await networks.list({signal})
+    await networks.prune({signal})
+
+    expect(connection.calls[0].body).toEqual({Name: "my-network", Driver: "bridge"})
+    expect(connection.calls.every((call) => call.signal === signal)).toEqual(true)
+    expect(connection.calls.map((call) => [call.method, call.path])).toEqual([
+      ["POST", "/networks/create"],
+      ["DELETE", "/networks/network-123"],
+      ["GET", "/networks/network-123"],
+      ["GET", "/networks"],
+      ["POST", "/networks/prune"]
+    ])
+  })
+
   it("create() sends POST /networks/create with body", async () => {
     let captured = null
 

@@ -72,6 +72,41 @@ describe("Docker", () => {
     ])
   })
 
+  it("forwards the caller signal and timeoutMs to root Docker commands", async () => {
+    const connection = new FakeDockerConnection()
+    const docker = new Docker(connection)
+    const controller = new AbortController()
+    const signal = controller.signal
+    const timeoutMs = 30_000
+
+    await docker.ping({signal, timeoutMs})
+    await docker.version({signal, timeoutMs})
+    await docker.info({signal, timeoutMs})
+
+    expect(connection.calls.map((call) => [call.method, call.path, call.signal, call.timeoutMs])).toEqual([
+      ["GET", "/_ping", signal, timeoutMs],
+      ["GET", "/version", signal, timeoutMs],
+      ["GET", "/info", signal, timeoutMs]
+    ])
+
+    for (const call of connection.calls) {
+      expect(call.signal).toBe(signal)
+    }
+  })
+
+  it("omits signal from root Docker commands when none is provided", async () => {
+    const connection = new FakeDockerConnection()
+    const docker = new Docker(connection)
+
+    await docker.ping()
+    await docker.version()
+    await docker.info()
+
+    for (const call of connection.calls) {
+      expect("signal" in call).toEqual(false)
+    }
+  })
+
   it("version() sends GET /version", async () => {
     let captured = null
     const versionData = {Version: "27.0.0", ApiVersion: "1.46", Os: "linux", Arch: "amd64"}

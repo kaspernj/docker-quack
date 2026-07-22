@@ -19,6 +19,7 @@
  * @property {string} [Driver] - Network driver name.
  * @property {DockerNetworkIPAM} [IPAM] - IPAM configuration.
  * @property {Record<string, string>} [Labels] - Network labels.
+ * @property {AbortSignal} [signal] - Optional abort signal to cancel network creation.
  * @property {number} [timeoutMs] - Optional per-request timeout for network creation.
  */
 
@@ -47,45 +48,48 @@ class DockerNetworks {
    * @returns {Promise<{Id: string}>}
    */
   async create(options) {
-    const {timeoutMs, ...body} = options
+    const {timeoutMs, signal, ...body} = options
 
     return await this.connection.request({
       method: "POST",
       path: "/networks/create",
       body,
+      ...(signal ? {signal} : {}),
       timeoutMs
     })
   }
 
   /**
    * Remove a network.
-   * @param {{id: string, timeoutMs?: number}} options
+   * @param {{id: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async remove(options) {
     await this.connection.requestRaw({
       method: "DELETE",
       path: `/networks/${options.id}`,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Inspect a network.
-   * @param {{id: string, timeoutMs?: number}} options
+   * @param {{id: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<DockerNetworkResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
       method: "GET",
       path: `/networks/${options.id}`,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * List networks.
-   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<DockerNetworkResponse[]>}
    */
   async list(options = {}) {
@@ -98,13 +102,14 @@ class DockerNetworks {
       method: "GET",
       path: "/networks",
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Prune unused networks.
-   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<{NetworksDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
@@ -117,6 +122,7 @@ class DockerNetworks {
       method: "POST",
       path: "/networks/prune",
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }

@@ -114,6 +114,46 @@ describe("DockerImages", () => {
     ])
   })
 
+  it("forwards signal to every image command request", async () => {
+    const connection = new FakeDockerConnection()
+    const images = new DockerImages(connection)
+    const signal = new AbortController().signal
+
+    await images.pull({image: "ubuntu:24.04", signal})
+    await images.inspect({name: "ubuntu:24.04", signal})
+    await images.remove({name: "ubuntu:24.04", force: true, signal})
+    await images.tag({source: "sha256:abc123", repo: "my-repo", tag: "latest", signal})
+    await images.list({signal})
+    await images.prune({signal})
+
+    expect(connection.calls.every((call) => call.signal === signal)).toEqual(true)
+    expect(connection.calls.map((call) => [call.method, call.path])).toEqual([
+      ["POST", "/images/create"],
+      ["GET", "/images/ubuntu:24.04/json"],
+      ["DELETE", "/images/ubuntu:24.04"],
+      ["POST", "/images/sha256%3Aabc123/tag"],
+      ["GET", "/images/json"],
+      ["POST", "/images/prune"]
+    ])
+  })
+
+  it("tag() forwards signal through the existing-target replacement path", async () => {
+    const connection = new ExistingTargetFakeConnection()
+    const images = new DockerImages(connection)
+    const signal = new AbortController().signal
+
+    await images.tag({source: "sha256:new-image", repo: "my-repo", tag: "latest", signal})
+
+    expect(connection.calls.every((call) => call.signal === signal)).toEqual(true)
+    expect(connection.calls.map((call) => [call.method, call.path])).toEqual([
+      ["POST", "/images/sha256%3Anew-image/tag"],
+      ["GET", "/images/sha256:new-image/json"],
+      ["GET", "/images/my-repo:latest/json"],
+      ["DELETE", "/images/my-repo:latest"],
+      ["POST", "/images/sha256%3Anew-image/tag"]
+    ])
+  })
+
   it("pull() with auth sets X-Registry-Auth header", async () => {
     let captured = null
 

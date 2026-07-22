@@ -2,6 +2,7 @@
  * @typedef {object} DockerVolumeCreateOptions
  * @property {string} Name - Volume name.
  * @property {Record<string, string>} [Labels] - Volume labels.
+ * @property {AbortSignal} [signal] - Optional abort signal to cancel volume creation.
  * @property {number} [timeoutMs] - Optional per-request timeout for volume creation.
  */
 
@@ -35,19 +36,20 @@ class DockerVolumes {
    * @returns {Promise<DockerVolumeResponse>}
    */
   async create(options) {
-    const {timeoutMs, ...body} = options
+    const {timeoutMs, signal, ...body} = options
 
     return await this.connection.request({
       method: "POST",
       path: "/volumes/create",
       body,
+      ...(signal ? {signal} : {}),
       timeoutMs
     })
   }
 
   /**
    * Remove a volume.
-   * @param {{name: string, force?: boolean, timeoutMs?: number}} options
+   * @param {{name: string, force?: boolean, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async remove(options) {
@@ -57,26 +59,28 @@ class DockerVolumes {
       method: "DELETE",
       path: `/volumes/${options.name}`,
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Inspect a volume.
-   * @param {{name: string, timeoutMs?: number}} options
+   * @param {{name: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<DockerVolumeResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
       method: "GET",
       path: `/volumes/${options.name}`,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * List volumes.
-   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<DockerVolumeListResponse>}
    */
   async list(options = {}) {
@@ -89,13 +93,14 @@ class DockerVolumes {
       method: "GET",
       path: "/volumes",
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Prune unused volumes.
-   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<{VolumesDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
@@ -108,6 +113,7 @@ class DockerVolumes {
       method: "POST",
       path: "/volumes/prune",
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }

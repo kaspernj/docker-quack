@@ -55,6 +55,28 @@ describe("DockerVolumes", () => {
     ])
   })
 
+  it("forwards signal to every volume command request without leaking it into the body", async () => {
+    const connection = new FakeDockerConnection()
+    const volumes = new DockerVolumes(connection)
+    const signal = new AbortController().signal
+
+    await volumes.create({Name: "my-volume", Labels: {env: "test"}, signal})
+    await volumes.remove({name: "my-volume", force: true, signal})
+    await volumes.inspect({name: "my-volume", signal})
+    await volumes.list({signal})
+    await volumes.prune({signal})
+
+    expect(connection.calls[0].body).toEqual({Name: "my-volume", Labels: {env: "test"}})
+    expect(connection.calls.every((call) => call.signal === signal)).toEqual(true)
+    expect(connection.calls.map((call) => [call.method, call.path])).toEqual([
+      ["POST", "/volumes/create"],
+      ["DELETE", "/volumes/my-volume"],
+      ["GET", "/volumes/my-volume"],
+      ["GET", "/volumes"],
+      ["POST", "/volumes/prune"]
+    ])
+  })
+
   it("create() sends POST /volumes/create with body", async () => {
     let captured = null
     const volumeData = {Name: "my-volume", Driver: "local", Mountpoint: "/var/lib/docker/volumes/my-volume/_data"}

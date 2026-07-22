@@ -22,9 +22,9 @@
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",
     "typescript": "^7.0.2",
-    "velocious": "^1.0.343"
+    "velocious": "1.0.555"
   },
   "dependencies": {
-    "snapreq": "^0.0.9"
+    "snapreq": "0.0.10"
   }
 }

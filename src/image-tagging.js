@@ -10,7 +10,7 @@ export default class DockerImageTagger {
   /**
    * Tags a Docker image, matching `docker tag` behavior when Docker reports that
    * the destination reference already exists.
-   * @param {{source: string, repo: string, tag?: string, timeoutMs?: number}} options
+   * @param {{source: string, repo: string, tag?: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async tag(options) {
@@ -20,6 +20,7 @@ export default class DockerImageTagger {
       method: "POST",
       path: `/images/${encodeURIComponent(options.source)}/tag`,
       query: {repo: options.repo, tag},
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     }
 
@@ -32,14 +33,14 @@ export default class DockerImageTagger {
       }
     }
 
-    const sourceImageId = this.imageIdFromResponse(await this.inspectImage(options.source, options.timeoutMs), options.source)
-    const targetImageId = this.imageIdFromResponse(await this.inspectImage(targetImage, options.timeoutMs), targetImage)
+    const sourceImageId = this.imageIdFromResponse(await this.inspectImage(options.source, options.timeoutMs, options.signal), options.source)
+    const targetImageId = this.imageIdFromResponse(await this.inspectImage(targetImage, options.timeoutMs, options.signal), targetImage)
 
     if (sourceImageId === targetImageId) {
       return
     }
 
-    await this.removeImage(targetImage, options.timeoutMs)
+    await this.removeImage(targetImage, options.timeoutMs, options.signal)
     await this.connection.request(tagRequest)
   }
 
@@ -74,12 +75,14 @@ export default class DockerImageTagger {
   /**
    * @param {string} name
    * @param {number} [timeoutMs]
+   * @param {AbortSignal} [signal]
    * @returns {Promise<import("./images.js").DockerImageInspectResponse>}
    */
-  async inspectImage(name, timeoutMs) {
+  async inspectImage(name, timeoutMs, signal) {
     return await this.connection.request({
       method: "GET",
       path: `/images/${name}/json`,
+      ...(signal ? {signal} : {}),
       timeoutMs
     })
   }
@@ -87,13 +90,15 @@ export default class DockerImageTagger {
   /**
    * @param {string} name
    * @param {number} [timeoutMs]
+   * @param {AbortSignal} [signal]
    * @returns {Promise<import("./images.js").DockerImageDeleteResponse[]>}
    */
-  async removeImage(name, timeoutMs) {
+  async removeImage(name, timeoutMs, signal) {
     return await this.connection.request({
       method: "DELETE",
       path: `/images/${name}`,
       query: {force: true},
+      ...(signal ? {signal} : {}),
       timeoutMs
     })
   }
