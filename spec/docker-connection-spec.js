@@ -914,6 +914,60 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("forwards the caller's abort signal and timeoutMs to SnapReq for buffered requests", async () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375, timeoutMs: 120_000})
+    const signal = new AbortController().signal
+    let captured = null
+
+    connection.client = {
+      async request(options) {
+        captured = options
+
+        return {status: 200, async buffer() { return Buffer.from("{}") }}
+      },
+      close() {}
+    }
+
+    try {
+      await connection.requestRaw({method: "GET", path: "/_ping", signal, timeoutMs: 4_321})
+
+      expect(captured.signal).toEqual(signal)
+      expect(captured.timeoutMs).toEqual(4_321)
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("forwards the caller's abort signal and timeoutMs to SnapReq for streaming requests", async () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375, timeoutMs: 120_000})
+    const signal = new AbortController().signal
+    let captured = null
+
+    connection.client = {
+      async requestStream(options) {
+        captured = options
+
+        return {
+          status: 200,
+          streamable: true,
+          stream() {
+            return (async function* () {})()
+          }
+        }
+      },
+      close() {}
+    }
+
+    try {
+      await connection.requestStream({method: "GET", path: "/stream", signal, timeoutMs: 4_321})
+
+      expect(captured.signal).toEqual(signal)
+      expect(captured.timeoutMs).toEqual(4_321)
+    } finally {
+      connection.close()
+    }
+  })
+
   it("close() closes the underlying transport", () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
     let closeCalled = false

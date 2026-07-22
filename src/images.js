@@ -45,6 +45,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} image - Image name with optional tag (e.g. "postgres:16")
  * @property {DockerRegistryAuth} [auth] - Registry authentication
  * @property {(progress: DockerImagePullProgress) => void} [onProgress] - Called with each progress object as it arrives
+ * @property {AbortSignal} [signal] - Optional abort signal to cancel the pull stream.
  * @property {number} [timeoutMs] - Optional per-request timeout for the pull stream.
  */
 
@@ -53,6 +54,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} source - Existing image name, tag, ID, or digest to tag
  * @property {string} repo - Target image repository
  * @property {string} [tag] - Target image tag. Defaults to `latest`.
+ * @property {AbortSignal} [signal] - Optional abort signal to cancel the tag operation.
  * @property {number} [timeoutMs] - Optional per-request timeout for the tag operation.
  */
 
@@ -89,6 +91,7 @@ class DockerImages {
       path: "/images/create",
       query,
       headers,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
 
@@ -98,20 +101,21 @@ class DockerImages {
 
   /**
    * Inspect an image.
-   * @param {{name: string, timeoutMs?: number}} options
+   * @param {{name: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<DockerImageInspectResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
       method: "GET",
       path: `/images/${options.name}/json`,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Remove an image.
-   * @param {{name: string, force?: boolean, timeoutMs?: number}} options
+   * @param {{name: string, force?: boolean, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<DockerImageDeleteResponse[]>}
    */
   async remove(options) {
@@ -121,6 +125,7 @@ class DockerImages {
       method: "DELETE",
       path: `/images/${options.name}`,
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
@@ -136,13 +141,14 @@ class DockerImages {
       source: options.source,
       repo: options.repo,
       tag: options.tag,
+      signal: options.signal,
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * List images.
-   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<DockerImageListItem[]>}
    */
   async list(options = {}) {
@@ -155,13 +161,14 @@ class DockerImages {
       method: "GET",
       path: "/images/json",
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Prune unused images.
-   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<{ImagesDeleted?: Array<{Deleted?: string, Untagged?: string}>, SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
@@ -174,6 +181,7 @@ class DockerImages {
       method: "POST",
       path: "/images/prune",
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }

@@ -48,6 +48,7 @@ import DockerVolumes from "./volumes.js"
 /**
  * @typedef {object} CommandOptions
  * @property {number} [timeoutMs] - Optional per-request timeout for the command request.
+ * @property {AbortSignal} [signal] - Optional abort signal to cancel the command request.
  */
 
 /** Docker Engine API client with HTTP keep-alive connections. */
@@ -83,7 +84,8 @@ class Docker {
     return await this.connection.request({
       method: "GET",
       path: "/version",
-      timeoutMs: options.timeoutMs
+      timeoutMs: options.timeoutMs,
+      ...(options.signal ? {signal: options.signal} : {})
     })
   }
 
@@ -96,7 +98,8 @@ class Docker {
     return await this.connection.request({
       method: "GET",
       path: "/_ping",
-      timeoutMs: options.timeoutMs
+      timeoutMs: options.timeoutMs,
+      ...(options.signal ? {signal: options.signal} : {})
     })
   }
 
@@ -109,7 +112,8 @@ class Docker {
     return await this.connection.request({
       method: "GET",
       path: "/info",
-      timeoutMs: options.timeoutMs
+      timeoutMs: options.timeoutMs,
+      ...(options.signal ? {signal: options.signal} : {})
     })
   }
 

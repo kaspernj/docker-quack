@@ -224,6 +224,54 @@ describe("DockerContainers", () => {
     ])
   })
 
+  it("forwards signal to every container command request without leaking it into the body", async () => {
+    const connection = new FakeDockerConnection()
+    const containers = new DockerContainers(connection)
+    const signal = new AbortController().signal
+
+    await containers.create({name: "container-name", Image: "ubuntu:24.04", signal})
+    await containers.start({id: "container-123", signal})
+    await containers.stop({id: "container-123", t: 30, signal})
+    await containers.remove({id: "container-123", force: true, signal})
+    await containers.inspect({id: "container-123", signal})
+    await containers.logs({id: "container-123", signal})
+    await containers.exec({id: "container-123", Cmd: ["echo", "hello"], signal})
+    await containers.commit({id: "container-123", repo: "repo", tag: "latest", signal})
+    await containers.putArchive({
+      id: "container-123",
+      path: "/tmp",
+      archive: Buffer.from("tar payload"),
+      archiveCompression: "identity",
+      signal
+    })
+    await containers.getArchive({id: "container-123", path: "/tmp", signal})
+    await containers.list({all: true, signal})
+    await containers.prune({signal})
+    await containers.stats({id: "container-123", signal})
+
+    // The abort signal must never be serialized into a request body.
+    expect(connection.calls[0].body).toEqual({Image: "ubuntu:24.04"})
+    expect(connection.calls.every((call) => call.signal === signal)).toEqual(true)
+    expect(connection.calls.map((call) => [call.method, call.path])).toEqual([
+      ["POST", "/containers/create"],
+      ["POST", "/containers/container-123/start"],
+      ["POST", "/containers/container-123/stop"],
+      ["DELETE", "/containers/container-123"],
+      ["GET", "/containers/container-123/json"],
+      ["GET", "/containers/container-123/logs"],
+      ["POST", "/containers/container-123/exec"],
+      ["POST", "/exec/exec-123/start"],
+      ["GET", "/exec/exec-123/json"],
+      ["POST", "/commit"],
+      ["POST", "/images/sha256%3Acommitted-image/tag"],
+      ["PUT", "/containers/container-123/archive"],
+      ["GET", "/containers/container-123/archive"],
+      ["GET", "/containers/json"],
+      ["POST", "/containers/prune"],
+      ["GET", "/containers/container-123/stats"]
+    ])
+  })
+
   it("remove() sends DELETE /containers/{id}", async () => {
     let captured = null
 

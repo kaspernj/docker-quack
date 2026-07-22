@@ -139,6 +139,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {DockerContainerExposedPorts} [ExposedPorts] - Exposed ports
  * @property {DockerHealthcheckConfig} [Healthcheck] - Container healthcheck configuration.
  * @property {Record<string, string>} [Labels] - Container labels (key/value), passed through to the Engine container config.
+ * @property {AbortSignal} [signal] - Optional abort signal to cancel the create request.
  * @property {number} [timeoutMs] - Optional per-request timeout for the create request.
  */
 
@@ -193,6 +194,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} [repo] - Optional image repository to tag after the commit
  * @property {string} [tag] - Optional image tag. Defaults to `latest` when `repo` is provided.
  * @property {Record<string, string>} [Labels] - Optional labels to set on the committed image (sent as the commit container config).
+ * @property {AbortSignal} [signal] - Optional abort signal to cancel the commit and tag requests.
  * @property {number} [timeoutMs] - Optional per-request timeout for the commit and tag requests.
  */
 
@@ -233,7 +235,7 @@ class DockerContainers {
    * @returns {Promise<{Id: string}>}
    */
   async create(options) {
-    const {name, timeoutMs, ...body} = options
+    const {name, timeoutMs, signal, ...body} = options
     const query = name ? {name} : undefined
 
     return await this.connection.request({
@@ -241,26 +243,28 @@ class DockerContainers {
       path: "/containers/create",
       query,
       body,
+      ...(signal ? {signal} : {}),
       timeoutMs
     })
   }
 
   /**
    * Start a container.
-   * @param {{id: string, timeoutMs?: number}} options
+   * @param {{id: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async start(options) {
     await this.connection.requestRaw({
       method: "POST",
       path: `/containers/${options.id}/start`,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Stop a container.
-   * @param {{id: string, t?: number, timeoutMs?: number}} options - `t` is the
+   * @param {{id: string, t?: number, signal?: AbortSignal, timeoutMs?: number}} options - `t` is the
    *   graceful-stop grace period in seconds; `timeoutMs` overrides the derived
    *   per-request timeout.
    * @returns {Promise<void>}
@@ -272,6 +276,7 @@ class DockerContainers {
       method: "POST",
       path: `/containers/${options.id}/stop`,
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: this.stopRequestTimeoutMs(options)
     })
   }
@@ -295,7 +300,7 @@ class DockerContainers {
 
   /**
    * Remove a container.
-   * @param {{id: string, force?: boolean, timeoutMs?: number}} options
+   * @param {{id: string, force?: boolean, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async remove(options) {
@@ -305,19 +310,21 @@ class DockerContainers {
       method: "DELETE",
       path: `/containers/${options.id}`,
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Inspect a container.
-   * @param {{id: string, timeoutMs?: number}} options
+   * @param {{id: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<DockerContainerInspectResponse>}
    */
   async inspect(options) {
     return await this.connection.request({
       method: "GET",
       path: `/containers/${options.id}/json`,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
@@ -371,6 +378,7 @@ class DockerContainers {
       method: "POST",
       path: `/containers/${options.id}/exec`,
       body: execBody,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
 
@@ -387,7 +395,7 @@ class DockerContainers {
 
     const {stdout, stderr} = await this.demuxStream(stream, options.onOutput)
 
-    const execInspect = await this.inspectExecUntilComplete({execId, timeoutMs: options.timeoutMs})
+    const execInspect = await this.inspectExecUntilComplete({execId, signal: options.signal, timeoutMs: options.timeoutMs})
 
     return {
       exitCode: execInspect.ExitCode,
@@ -397,10 +405,10 @@ class DockerContainers {
   }
 
   /**
-   * @param {{execId: string, timeoutMs?: number}} args
+   * @param {{execId: string, signal?: AbortSignal, timeoutMs?: number}} args
    * @returns {Promise<DockerExecInspectResponse & {ExitCode: number}>}
    */
-  async inspectExecUntilComplete({execId, timeoutMs}) {
+  async inspectExecUntilComplete({execId, signal, timeoutMs}) {
     /** @type {DockerExecInspectResponse | null} */
     let execInspect = null
 
@@ -408,6 +416,7 @@ class DockerContainers {
       execInspect = await this.connection.request({
         method: "GET",
         path: `/exec/${execId}/json`,
+        ...(signal ? {signal} : {}),
         timeoutMs
       })
 
@@ -453,6 +462,7 @@ class DockerContainers {
       query: {container: options.id},
       ...(options.Labels ? {body: {Labels: options.Labels}} : {}),
       retry: true,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
 
@@ -461,6 +471,7 @@ class DockerContainers {
         source: this.imageTagger.imageIdFromResponse(result, options.id),
         repo: options.repo,
         tag: options.tag,
+        signal: options.signal,
         timeoutMs: options.timeoutMs
       })
     }
@@ -470,7 +481,7 @@ class DockerContainers {
 
   /**
    * Upload a tar archive to a container path.
-   * @param {{id: string, path: string, archive: Buffer | import("node:stream").Readable, archiveCompression?: ArchiveCompression, timeoutMs?: number}} options
+   * @param {{id: string, path: string, archive: Buffer | import("node:stream").Readable, archiveCompression?: ArchiveCompression, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async putArchive(options) {
@@ -480,6 +491,7 @@ class DockerContainers {
       query: {path: options.path},
       body: this.archiveBody(options.archive, options.archiveCompression || "gzip"),
       headers: {"Content-Type": "application/x-tar"},
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
@@ -519,7 +531,7 @@ class DockerContainers {
 
   /**
    * Download a tar archive of a container path.
-   * @param {{id: string, path: string, timeoutMs?: number}} options
+   * @param {{id: string, path: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<Buffer>}
    */
   async getArchive(options) {
@@ -527,13 +539,14 @@ class DockerContainers {
       method: "GET",
       path: `/containers/${options.id}/archive`,
       query: {path: options.path},
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * List containers.
-   * @param {{all?: boolean, filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @param {{all?: boolean, filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<DockerContainerListItem[]>}
    */
   async list(options = {}) {
@@ -547,13 +560,14 @@ class DockerContainers {
       method: "GET",
       path: "/containers/json",
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Prune stopped containers.
-   * @param {{filters?: import("./docker-connection.js").DockerFilters, timeoutMs?: number}} [options]
+   * @param {{filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<{ContainersDeleted?: string[], SpaceReclaimed?: number}>}
    */
   async prune(options = {}) {
@@ -566,13 +580,14 @@ class DockerContainers {
       method: "POST",
       path: "/containers/prune",
       query,
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
 
   /**
    * Get one-shot container stats (no streaming).
-   * @param {{id: string, timeoutMs?: number}} options
+   * @param {{id: string, signal?: AbortSignal, timeoutMs?: number}} options
    * @returns {Promise<DockerContainerStatsResponse>}
    */
   async stats(options) {
@@ -580,6 +595,7 @@ class DockerContainers {
       method: "GET",
       path: `/containers/${options.id}/stats`,
       query: {stream: false},
+      ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
   }
