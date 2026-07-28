@@ -1,4 +1,5 @@
 import http from "node:http"
+import {Readable} from "node:stream"
 import {gunzipSync} from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import Docker from "../src/index.js"
@@ -536,6 +537,124 @@ describe("DockerContainers", () => {
       expect(captured.url).toEqual("/containers/abc123/archive?path=%2Ftmp")
       expect(captured.headers["content-type"]).toEqual("application/x-tar")
       expect(captured.bodyBuffer.toString("utf8")).toEqual("tar payload")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("getArchiveStream() returns the connection stream without reading ahead and forwards its options", async () => {
+    const archiveBytes = Buffer.from([0, 1, 2, 127, 128, 254, 255])
+    const signal = new AbortController().signal
+    const connection = new FakeDockerConnection()
+    let readCalls = 0
+    const source = new Readable({
+      read() {
+        readCalls += 1
+        this.push(archiveBytes)
+        this.push(null)
+      }
+    })
+
+    connection.requestStream = async (options) => {
+      connection.calls.push(options)
+
+      return {stream: source, statusCode: 200}
+    }
+
+    const containers = new DockerContainers(connection)
+    const stream = await containers.getArchiveStream({
+      id: "container-123",
+      path: "/tmp/archive path",
+      signal,
+      timeoutMs: 45_000
+    })
+
+    expect(stream === source).toEqual(true)
+    expect(readCalls).toEqual(0)
+    expect(connection.calls).toEqual([{
+      method: "GET",
+      path: "/containers/container-123/archive",
+      query: {path: "/tmp/archive path"},
+      signal,
+      timeoutMs: 45_000
+    }])
+
+    const chunks = []
+
+    for await (const chunk of stream) {
+      chunks.push(chunk)
+    }
+
+    expect(Buffer.concat(chunks).toString("hex")).toEqual(archiveBytes.toString("hex"))
+    expect(readCalls).toEqual(1)
+  })
+
+  it("getArchiveStream() resolves before the response body completes and preserves all bytes", async () => {
+    const firstChunk = Buffer.from([0, 1, 2, 3])
+    const secondChunk = Buffer.from([252, 253, 254, 255])
+    let capturedUrl = null
+    let responseEnded = false
+    let finishResponse
+
+    const server = await createMockServer((req, res) => {
+      capturedUrl = req.url
+      res.writeHead(200, {"Content-Type": "application/x-tar"})
+      res.write(firstChunk)
+      finishResponse = () => {
+        responseEnded = true
+        res.end(secondChunk)
+      }
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+    let earlyResolutionTimeout
+
+    try {
+      const stream = await Promise.race([
+        docker.containers.getArchiveStream({id: "abc123", path: "/tmp/archive path"}),
+        new Promise((_resolve, reject) => {
+          earlyResolutionTimeout = setTimeout(() => {
+            reject(new Error("getArchiveStream() did not resolve while the response body remained open"))
+          }, 1_000)
+        })
+      ])
+
+      clearTimeout(earlyResolutionTimeout)
+      expect(capturedUrl).toEqual("/containers/abc123/archive?path=%2Ftmp%2Farchive+path")
+      expect(responseEnded).toEqual(false)
+
+      finishResponse()
+
+      const chunks = []
+
+      for await (const chunk of stream) {
+        chunks.push(chunk)
+      }
+
+      expect(Buffer.concat(chunks).toString("hex")).toEqual(Buffer.concat([firstChunk, secondChunk]).toString("hex"))
+    } finally {
+      clearTimeout(earlyResolutionTimeout)
+      if (finishResponse && !responseEnded) finishResponse()
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("getArchiveStream() preserves DockerConnection HTTP error mapping", async () => {
+    const server = await createMockServer((_req, res) => {
+      jsonResponse(res, 404, {message: "archive path not found"})
+    })
+
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      await expect(async () => await docker.containers.getArchiveStream({
+        id: "missing-container",
+        path: "/tmp/missing"
+      })).toThrow("Docker API error 404 GET /containers/missing-container/archive?path=%2Ftmp%2Fmissing: archive path not found")
     } finally {
       docker.close()
       server.close()

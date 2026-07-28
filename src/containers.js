@@ -545,6 +545,23 @@ class DockerContainers {
   }
 
   /**
+   * Download a tar archive of a container path as a readable stream.
+   * @param {{id: string, path: string, signal?: AbortSignal, timeoutMs?: number}} options
+   * @returns {Promise<import("node:stream").Readable>}
+   */
+  async getArchiveStream(options) {
+    const {stream} = await this.connection.requestStream({
+      method: "GET",
+      path: `/containers/${options.id}/archive`,
+      query: {path: options.path},
+      ...(options.signal ? {signal: options.signal} : {}),
+      timeoutMs: options.timeoutMs
+    })
+
+    return stream
+  }
+
+  /**
    * List containers.
    * @param {{all?: boolean, filters?: import("./docker-connection.js").DockerFilters, signal?: AbortSignal, timeoutMs?: number}} [options]
    * @returns {Promise<DockerContainerListItem[]>}

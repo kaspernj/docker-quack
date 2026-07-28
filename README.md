@@ -9,7 +9,7 @@ Docker Engine API client with HTTP keep-alive for Node.js.
 - Full Docker Engine API coverage: containers, images, networks, volumes
 - Container exec with multiplexed stdout/stderr parsing
 - Container log streaming with frame header parsing
-- Container archive upload/download, with gzip-compressed archive uploads by default
+- Container archive upload/download, with streaming downloads and gzip-compressed archive uploads by default
 - HTTP response compression requested by default, with gzip, deflate, Brotli, and zstd decoding where supported by Node.js
 - Optional HTTP request body compression for endpoints that accept compressed request bodies
 - Container commit retries for transient Docker daemon/containerd failures
@@ -67,7 +67,7 @@ const dockerViaSocketduct = openDockerOverSocketduct({
 
 ### Timeouts
 
-Buffered Docker API requests default to a 120000ms timeout. Override it on the connection or on a single request; use `0` to disable a timeout. Every high-level command accepts `timeoutMs`. Streaming commands (`pull`, `logs`, and `exec`) stay untimed by default so they can stay open, but an explicit `timeoutMs` on the command bounds that stream.
+Buffered Docker API requests default to a 120000ms timeout. Override it on the connection or on a single request; use `0` to disable a timeout. Every high-level command accepts `timeoutMs`. Streaming commands (`pull`, `logs`, `exec`, and `getArchiveStream`) stay untimed by default so they can stay open, but an explicit `timeoutMs` on the command bounds that stream.
 
 ```js
 const docker = Docker.open({host: "127.0.0.1", port: 2375, timeoutMs: 30000})
@@ -132,6 +132,14 @@ await docker.containers.commit({id: Id, repo: "my-repo", tag: "latest", timeoutM
 await docker.containers.putArchive({id: Id, path: "/tmp", archive: tarBuffer})
 await docker.containers.putArchive({id: Id, path: "/tmp", archive: tarBuffer, archiveCompression: "identity"})
 const tar = await docker.containers.getArchive({id: Id, path: "/etc/hostname"})
+
+// Stream an archive with native backpressure instead of buffering it.
+// The promise resolves when the response stream is available, before the full archive arrives.
+const tarStream = await docker.containers.getArchiveStream({id: Id, path: "/var/lib/my-app"})
+
+for await (const chunk of tarStream) {
+  // Write each Buffer chunk to the destination.
+}
 
 // Stop and remove
 await docker.containers.stop({id: Id})
