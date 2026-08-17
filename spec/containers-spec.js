@@ -325,7 +325,21 @@ describe("DockerContainers", () => {
 
   it("inspect() sends GET /containers/{id}/json", async () => {
     let captured = null
-    const inspectData = {Id: "abc123", Name: "/my-container", State: {Status: "running"}}
+    /** @type {import("../src/containers.js").DockerContainerInspectResponse} */
+    const inspectData = {
+      Id: "abc123",
+      Name: "/my-container",
+      RestartCount: 1,
+      State: {
+        Error: "",
+        ExitCode: 137,
+        FinishedAt: "2026-08-16T12:01:00.000Z",
+        OOMKilled: true,
+        Running: false,
+        StartedAt: "2026-08-16T12:00:00.000Z",
+        Status: "exited"
+      }
+    }
 
     const server = await createMockServer((req, res) => {
       captureRequest(req, (data) => {
@@ -343,7 +357,9 @@ describe("DockerContainers", () => {
       expect(captured.method).toEqual("GET")
       expect(captured.url).toEqual("/containers/abc123/json")
       expect(result.Id).toEqual("abc123")
-      expect(result.State.Status).toEqual("running")
+      expect(result.State.Status).toEqual("exited")
+      expect(result.State.ExitCode).toEqual(137)
+      expect(result.State.OOMKilled).toEqual(true)
     } finally {
       docker.close()
       server.close()

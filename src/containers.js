@@ -98,13 +98,28 @@ import DockerImageTagger from "./image-tagging.js"
  */
 
 /**
+ * @typedef {object} DockerContainerState
+ * @property {string} [Error] - Error reported by the container runtime.
+ * @property {number} [ExitCode] - Last process exit code.
+ * @property {string} [FinishedAt] - Time the container process stopped.
+ * @property {{Status?: string}} [Health] - Container healthcheck state.
+ * @property {boolean} [OOMKilled] - Whether the process was terminated by the out-of-memory killer.
+ * @property {boolean} [Running] - Whether the container process is running.
+ * @property {string} [StartedAt] - Time the container process started.
+ * @property {string} [Status] - Container lifecycle status.
+ */
+
+/**
  * @typedef {object} DockerContainerInspectResponse
  * @property {string} [Id] - Container ID.
  * @property {string} [Name] - Container name.
+ * @property {{ExposedPorts?: DockerContainerExposedPorts}} [Config] - Container configuration reported by Docker.
  * @property {Record<string, string>} [Labels] - Container labels.
  * @property {DockerContainerMountPoint[]} [Mounts] - Container mount points.
  * @property {{Networks?: Record<string, DockerContainerEndpointSettings>}} [NetworkSettings] - Runtime network details.
  * @property {DockerContainerHostConfig} [HostConfig] - Host configuration reported by Docker.
+ * @property {number} [RestartCount] - Number of times Docker restarted the container.
+ * @property {DockerContainerState} [State] - Container runtime state.
  */
 
 /**
@@ -321,12 +336,12 @@ class DockerContainers {
    * @returns {Promise<DockerContainerInspectResponse>}
    */
   async inspect(options) {
-    return await this.connection.request({
+    return /** @type {DockerContainerInspectResponse} */ (await this.connection.request({
       method: "GET",
       path: `/containers/${options.id}/json`,
       ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
-    })
+    }))
   }
 
   /**
