@@ -21,6 +21,17 @@ function malformedPullResponseError(format, cause) {
 }
 
 /**
+ * @param {string} image
+ * @returns {string}
+ */
+function imageReferenceWithDefaultTag(image) {
+  if (image.includes("@")) return image
+  if (image.lastIndexOf(":") > image.lastIndexOf("/")) return image
+
+  return `${image}:latest`
+}
+
+/**
  * @typedef {object} DockerRegistryAuth
  * @property {string} username - Registry username.
  * @property {string} password - Registry password.
@@ -63,7 +74,7 @@ function malformedPullResponseError(format, cause) {
 
 /**
  * @typedef {object} PullOptions
- * @property {string} image - Image name with optional tag (e.g. "postgres:16")
+ * @property {string} image - Image name with optional tag or digest (e.g. "postgres:16"). Untagged names default to `latest`.
  * @property {DockerRegistryAuth} [auth] - Registry authentication
  * @property {(progress: DockerImagePullProgress) => void} [onProgress] - Called with each progress object as it arrives
  * @property {AbortSignal} [signal] - Optional abort signal to cancel the pull stream.
@@ -104,8 +115,7 @@ class DockerImages {
       headers["X-Registry-Auth"] = authPayload
     }
 
-    // Parse image name and tag for the fromImage query parameter
-    const query = {fromImage: options.image}
+    const query = {fromImage: imageReferenceWithDefaultTag(options.image)}
 
     const {stream} = await this.connection.requestStream({
       method: "POST",

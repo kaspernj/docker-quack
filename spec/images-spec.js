@@ -99,6 +99,34 @@ describe("DockerImages", () => {
     }
   })
 
+  it("pull() defaults an untagged image to latest", async () => {
+    const connection = new FakeDockerConnection()
+    const images = new DockerImages(connection)
+
+    await images.pull({image: "ubuntu"})
+
+    expect(connection.calls[0].query).toEqual({fromImage: "ubuntu:latest"})
+  })
+
+  it("pull() does not treat a registry port as an image tag", async () => {
+    const connection = new FakeDockerConnection()
+    const images = new DockerImages(connection)
+
+    await images.pull({image: "registry.example:5000/team/image"})
+
+    expect(connection.calls[0].query).toEqual({fromImage: "registry.example:5000/team/image:latest"})
+  })
+
+  it("pull() preserves an image digest without adding latest", async () => {
+    const connection = new FakeDockerConnection()
+    const images = new DockerImages(connection)
+    const image = `registry.example/team/image@sha256:${"a".repeat(64)}`
+
+    await images.pull({image})
+
+    expect(connection.calls[0].query).toEqual({fromImage: image})
+  })
+
   it("forwards timeoutMs to every image command request", async () => {
     const connection = new FakeDockerConnection()
     const images = new DockerImages(connection)

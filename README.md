@@ -153,8 +153,11 @@ await docker.containers.prune({timeoutMs: 300000})
 ### Images
 
 ```js
-// Pull
+// Pull a specific tag
 await docker.images.pull({image: "alpine:3.21"})
+
+// Untagged image names default to latest; they do not request every registry tag.
+await docker.images.pull({image: "alpine"})
 
 // The promise resolves only when Docker's final nonblank progress frame reports
 // that a newer image was downloaded or the requested image is already up to
