@@ -528,6 +528,41 @@ describe("DockerImages", () => {
     ])
   })
 
+  it("pull stream rejects progress after an earlier terminal result", async () => {
+    await expect(async () => {
+      await consumePullChunks([
+        JSON.stringify({status: "Status: Image is up to date for alpine:3.20"}) + "\n",
+        JSON.stringify({status: "Pulling fs layer", id: "abc123"}) + "\n"
+      ])
+    }).toThrow("Docker pull response ended before Docker reported pull completion.")
+  })
+
+  it("pull stream accepts multiple tags when the final frame is terminal", async () => {
+    await consumePullChunks([
+      JSON.stringify({status: "Status: Image is up to date for alpine:3.20"}) + "\n",
+      JSON.stringify({status: "Pull complete", id: "abc123"}) + "\n",
+      JSON.stringify({status: "Status: Downloaded newer image for alpine:3.21"}) + "\n"
+    ])
+  })
+
+  it("pull stream completion is unaffected when onProgress deletes terminal status", async () => {
+    await consumePullChunks([
+      JSON.stringify({status: "Status: Image is up to date for alpine:3.21"}) + "\n"
+    ], (progress) => {
+      delete progress.status
+    })
+  })
+
+  it("pull stream completion is unaffected when onProgress assigns terminal status", async () => {
+    await expect(async () => {
+      await consumePullChunks([
+        JSON.stringify({status: "Pull complete", id: "abc123"}) + "\n"
+      ], (progress) => {
+        progress.status = "Status: Downloaded newer image for alpine:3.21"
+      })
+    }).toThrow("Docker pull response ended before Docker reported pull completion.")
+  })
+
   it("pull stream rejects a top-level Docker error", async () => {
     await expect(async () => {
       await consumePullChunks([
@@ -586,6 +621,27 @@ describe("DockerImages", () => {
     }
 
     expect(thrownError?.message).toContain("Docker pull response contained malformed JSON:")
+  })
+
+  it("pull stream rejects invalid UTF-8 in otherwise terminal JSON", async () => {
+    const firstChunk = Buffer.concat([
+      Buffer.from("{\"status\":\"Status: Downloaded newer image for alpine:"),
+      Buffer.from([0xc3])
+    ])
+    const secondChunk = Buffer.concat([
+      Buffer.from([0x28]),
+      Buffer.from("\"}\n")
+    ])
+    let thrownError = null
+
+    try {
+      await consumePullChunks([firstChunk, secondChunk])
+    } catch (error) {
+      thrownError = error
+    }
+
+    expect(thrownError?.message).toContain("Docker pull response contained malformed UTF-8:")
+    expect(thrownError?.cause instanceof Error).toEqual(true)
   })
 
   it("pull stream rejects empty EOF", async () => {

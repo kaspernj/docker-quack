@@ -1,1 +1,1 @@
-Reject image pulls when Docker reports a structured stream error, emits malformed JSON, or ends the response before its terminal downloaded-newer or already-up-to-date result. Pull progress remains newline-delimited and streaming across arbitrary response chunk boundaries.
+Reject image pulls when Docker reports a structured stream error, emits malformed JSON or UTF-8, or ends with a final nonblank frame other than its terminal downloaded-newer or already-up-to-date result. Pull progress remains newline-delimited and streaming across arbitrary response chunk boundaries.

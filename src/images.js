@@ -1,10 +1,24 @@
-import {StringDecoder} from "node:string_decoder"
+import {TextDecoder} from "node:util"
 import DockerImageTagger from "./image-tagging.js"
 
 const PULL_SUCCESS_STATUS_PREFIXES = [
   "Status: Downloaded newer image for ",
   "Status: Image is up to date for "
 ]
+
+/**
+ * @param {"JSON" | "UTF-8"} format
+ * @param {unknown} cause
+ * @returns {Error}
+ */
+function malformedPullResponseError(format, cause) {
+  const detail = cause instanceof Error ? `: ${cause.message}` : ""
+  const error = new Error(`Docker pull response contained malformed ${format}${detail}`)
+
+  Object.defineProperty(error, "cause", {configurable: true, value: cause})
+
+  return error
+}
 
 /**
  * @typedef {object} DockerRegistryAuth
@@ -202,9 +216,19 @@ class DockerImages {
    * @returns {Promise<void>}
    */
   async consumePullStream(stream, onProgress) {
-    const decoder = new StringDecoder("utf8")
+    const decoder = new TextDecoder("utf-8", {fatal: true})
     let buffer = ""
-    let observedTerminalSuccess = false
+    let finalFrameWasTerminalSuccess = false
+
+    const decodeChunk = (chunk, streaming) => {
+      try {
+        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk
+
+        return decoder.decode(bytes, {stream: streaming})
+      } catch (error) {
+        throw malformedPullResponseError("UTF-8", error)
+      }
+    }
 
     const consumeLine = (line) => {
       if (!line) return
@@ -214,11 +238,7 @@ class DockerImages {
       try {
         progress = JSON.parse(line)
       } catch (error) {
-        const detail = error instanceof Error ? `: ${error.message}` : ""
-        const malformedJsonError = new Error(`Docker pull response contained malformed JSON${detail}`)
-
-        Object.defineProperty(malformedJsonError, "cause", {configurable: true, value: error})
-        throw malformedJsonError
+        throw malformedPullResponseError("JSON", error)
       }
 
       const errorMessage = progress.errorDetail?.message || progress.error
@@ -227,18 +247,16 @@ class DockerImages {
         throw new Error(`Docker pull error: ${errorMessage}`)
       }
 
-      if (onProgress) onProgress(progress)
-
-      if (
+      finalFrameWasTerminalSuccess = (
         typeof progress.status === "string" &&
         PULL_SUCCESS_STATUS_PREFIXES.some((prefix) => progress.status.startsWith(prefix) && progress.status.length > prefix.length)
-      ) {
-        observedTerminalSuccess = true
-      }
+      )
+
+      if (onProgress) onProgress(progress)
     }
 
     for await (const chunk of stream) {
-      buffer += decoder.write(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
+      buffer += decodeChunk(chunk, true)
 
       let newlineIndex
 
@@ -248,10 +266,10 @@ class DockerImages {
       }
     }
 
-    buffer += decoder.end()
+    buffer += decodeChunk(undefined, false)
     consumeLine(buffer.trim())
 
-    if (!observedTerminalSuccess) {
+    if (!finalFrameWasTerminalSuccess) {
       throw new Error("Docker pull response ended before Docker reported pull completion.")
     }
   }
