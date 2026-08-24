@@ -156,6 +156,10 @@ await docker.containers.prune({timeoutMs: 300000})
 // Pull
 await docker.images.pull({image: "alpine:3.21"})
 
+// The promise resolves only after Docker reports that a newer image was
+// downloaded or the requested image is already up to date. Docker stream
+// errors, malformed output, and premature end-of-stream reject the promise.
+
 // Pull with authentication
 await docker.images.pull({
   image: "private-registry.example.com/my-image:latest",

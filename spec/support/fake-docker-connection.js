@@ -21,6 +21,13 @@ export default class FakeDockerConnection {
   async requestStream(options) {
     this.calls.push(options)
 
+    if (options.path === "/images/create") {
+      return {
+        stream: Readable.from([JSON.stringify({status: "Status: Image is up to date for fake-image:latest"}) + "\n"]),
+        statusCode: 200
+      }
+    }
+
     return {stream: Readable.from([]), statusCode: 200}
   }
 

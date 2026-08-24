@@ -1,4 +1,10 @@
+import {StringDecoder} from "node:string_decoder"
 import DockerImageTagger from "./image-tagging.js"
+
+const PULL_SUCCESS_STATUS_PREFIXES = [
+  "Status: Downloaded newer image for ",
+  "Status: Image is up to date for "
+]
 
 /**
  * @typedef {object} DockerRegistryAuth
@@ -14,6 +20,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} [progress] - Human-readable progress text.
  * @property {{current?: number, total?: number}} [progressDetail] - Numeric pull progress details.
  * @property {string} [error] - Docker pull error text.
+ * @property {{code?: number, message?: string}} [errorDetail] - Structured Docker pull error.
  */
 
 /**
@@ -69,7 +76,7 @@ class DockerImages {
   }
 
   /**
-   * Pull an image from a registry. Consumes the entire streaming response before resolving.
+   * Pull an image from a registry. Resolves only after Docker reports a terminal success result.
    * When auth is provided, it is sent as a base64-encoded JSON X-Registry-Auth header.
    * @param {PullOptions} options
    * @returns {Promise<void>}
@@ -188,66 +195,65 @@ class DockerImages {
 
   /**
    * Consume the pull progress stream. Docker streams newline-delimited JSON objects
-   * with progress info. If any object contains an error field, throw it.
+   * with progress info. Docker errors and invalid or incomplete streams reject the pull.
    * When onProgress is provided, each parsed JSON object is forwarded live.
    * @param {import("node:stream").Readable} stream
    * @param {(progress: DockerImagePullProgress) => void} [onProgress] - Called with each progress object as it arrives
    * @returns {Promise<void>}
    */
-  consumePullStream(stream, onProgress) {
-    return new Promise((resolve, reject) => {
-      let buffer = ""
+  async consumePullStream(stream, onProgress) {
+    const decoder = new StringDecoder("utf8")
+    let buffer = ""
+    let observedTerminalSuccess = false
 
-      stream.on("data", (chunk) => {
-        buffer += chunk.toString("utf-8")
+    const consumeLine = (line) => {
+      if (!line) return
 
-        // Parse complete newline-delimited JSON lines
-        let newlineIndex
+      let progress
 
-        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, newlineIndex).trim()
+      try {
+        progress = JSON.parse(line)
+      } catch (error) {
+        const detail = error instanceof Error ? `: ${error.message}` : ""
+        const malformedJsonError = new Error(`Docker pull response contained malformed JSON${detail}`)
 
-          buffer = buffer.slice(newlineIndex + 1)
+        Object.defineProperty(malformedJsonError, "cause", {configurable: true, value: error})
+        throw malformedJsonError
+      }
 
-          if (!line) continue
+      const errorMessage = progress.errorDetail?.message || progress.error
 
-          try {
-            const parsed = JSON.parse(line)
+      if (errorMessage) {
+        throw new Error(`Docker pull error: ${errorMessage}`)
+      }
 
-            if (parsed.error) {
-              reject(new Error(`Docker pull error: ${parsed.error}`))
-              return
-            }
+      if (onProgress) onProgress(progress)
 
-            if (onProgress) onProgress(parsed)
-          } catch {
-            // Non-JSON lines are ignored
-          }
-        }
-      })
-      stream.on("error", reject)
-      stream.on("end", () => {
-        // Parse any remaining buffered content
-        const remaining = buffer.trim()
+      if (
+        typeof progress.status === "string" &&
+        PULL_SUCCESS_STATUS_PREFIXES.some((prefix) => progress.status.startsWith(prefix) && progress.status.length > prefix.length)
+      ) {
+        observedTerminalSuccess = true
+      }
+    }
 
-        if (remaining) {
-          try {
-            const parsed = JSON.parse(remaining)
+    for await (const chunk of stream) {
+      buffer += decoder.write(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
 
-            if (parsed.error) {
-              reject(new Error(`Docker pull error: ${parsed.error}`))
-              return
-            }
+      let newlineIndex
 
-            if (onProgress) onProgress(parsed)
-          } catch {
-            // Non-JSON lines are ignored
-          }
-        }
+      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+        consumeLine(buffer.slice(0, newlineIndex).trim())
+        buffer = buffer.slice(newlineIndex + 1)
+      }
+    }
 
-        resolve()
-      })
-    })
+    buffer += decoder.end()
+    consumeLine(buffer.trim())
+
+    if (!observedTerminalSuccess) {
+      throw new Error("Docker pull response ended before Docker reported pull completion.")
+    }
   }
 }
 
