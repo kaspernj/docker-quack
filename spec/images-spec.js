@@ -1,4 +1,5 @@
 import http from "node:http"
+import {Readable} from "node:stream"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import Docker from "../src/index.js"
 import DockerImages from "../src/images.js"
@@ -31,6 +32,12 @@ function captureRequest(req, callback) {
 function jsonResponse(res, statusCode, body) {
   res.writeHead(statusCode, {"Content-Type": "application/json"})
   res.end(JSON.stringify(body))
+}
+
+async function consumePullChunks(chunks, onProgress) {
+  const images = new DockerImages(new FakeDockerConnection())
+
+  await images.consumePullStream(Readable.from(chunks), onProgress)
 }
 
 describe("DockerImages", () => {
@@ -74,7 +81,7 @@ describe("DockerImages", () => {
       captureRequest(req, (data) => {
         captured = data
         res.writeHead(200, {"Content-Type": "application/json"})
-        res.end(JSON.stringify({status: "Pull complete"}) + "\n")
+        res.end(JSON.stringify({status: "Status: Downloaded newer image for ubuntu:24.04"}) + "\n")
       })
     })
 
@@ -90,6 +97,34 @@ describe("DockerImages", () => {
       docker.close()
       server.close()
     }
+  })
+
+  it("pull() defaults an untagged image to latest", async () => {
+    const connection = new FakeDockerConnection()
+    const images = new DockerImages(connection)
+
+    await images.pull({image: "ubuntu"})
+
+    expect(connection.calls[0].query).toEqual({fromImage: "ubuntu:latest"})
+  })
+
+  it("pull() does not treat a registry port as an image tag", async () => {
+    const connection = new FakeDockerConnection()
+    const images = new DockerImages(connection)
+
+    await images.pull({image: "registry.example:5000/team/image"})
+
+    expect(connection.calls[0].query).toEqual({fromImage: "registry.example:5000/team/image:latest"})
+  })
+
+  it("pull() preserves an image digest without adding latest", async () => {
+    const connection = new FakeDockerConnection()
+    const images = new DockerImages(connection)
+    const image = `registry.example/team/image@sha256:${"a".repeat(64)}`
+
+    await images.pull({image})
+
+    expect(connection.calls[0].query).toEqual({fromImage: image})
   })
 
   it("forwards timeoutMs to every image command request", async () => {
@@ -161,7 +196,7 @@ describe("DockerImages", () => {
       captureRequest(req, (data) => {
         captured = data
         res.writeHead(200, {"Content-Type": "application/json"})
-        res.end(JSON.stringify({status: "Pull complete"}) + "\n")
+        res.end(JSON.stringify({status: "Status: Downloaded newer image for private/image:latest"}) + "\n")
       })
     })
 
@@ -473,6 +508,7 @@ describe("DockerImages", () => {
     const progress1 = {status: "Pulling fs layer", id: "abc123"}
     const progress2 = {status: "Downloading", progressDetail: {current: 1024, total: 4096}, id: "abc123"}
     const progress3 = {status: "Pull complete", id: "abc123"}
+    const progress4 = {status: "Status: Downloaded newer image for alpine:3.21"}
 
     const server = await createMockServer((req, res) => {
       captureRequest(req, () => {
@@ -480,6 +516,7 @@ describe("DockerImages", () => {
         res.write(JSON.stringify(progress1) + "\n")
         res.write(JSON.stringify(progress2) + "\n")
         res.write(JSON.stringify(progress3) + "\n")
+        res.write(JSON.stringify(progress4) + "\n")
         res.end()
       })
     })
@@ -495,10 +532,183 @@ describe("DockerImages", () => {
         onProgress: (progress) => received.push(progress)
       })
 
-      expect(received.length).toEqual(3)
+      expect(received.length).toEqual(4)
       expect(received[0].status).toEqual("Pulling fs layer")
       expect(received[1].progressDetail.current).toEqual(1024)
       expect(received[2].status).toEqual("Pull complete")
+      expect(received[3].status).toEqual("Status: Downloaded newer image for alpine:3.21")
+    } finally {
+      docker.close()
+      server.close()
+    }
+  })
+
+  it("pull stream accepts a newly-downloaded terminal result", async () => {
+    await consumePullChunks([
+      JSON.stringify({status: "Pull complete", id: "abc123"}) + "\n",
+      JSON.stringify({status: "Status: Downloaded newer image for alpine:3.21"}) + "\n"
+    ])
+  })
+
+  it("pull stream accepts an already-up-to-date terminal result", async () => {
+    await consumePullChunks([
+      JSON.stringify({status: "Status: Image is up to date for alpine:3.21"}) + "\n"
+    ])
+  })
+
+  it("pull stream rejects progress after an earlier terminal result", async () => {
+    await expect(async () => {
+      await consumePullChunks([
+        JSON.stringify({status: "Status: Image is up to date for alpine:3.20"}) + "\n",
+        JSON.stringify({status: "Pulling fs layer", id: "abc123"}) + "\n"
+      ])
+    }).toThrow("Docker pull response ended before Docker reported pull completion.")
+  })
+
+  it("pull stream accepts multiple tags when the final frame is terminal", async () => {
+    await consumePullChunks([
+      JSON.stringify({status: "Status: Image is up to date for alpine:3.20"}) + "\n",
+      JSON.stringify({status: "Pull complete", id: "abc123"}) + "\n",
+      JSON.stringify({status: "Status: Downloaded newer image for alpine:3.21"}) + "\n"
+    ])
+  })
+
+  it("pull stream completion is unaffected when onProgress deletes terminal status", async () => {
+    await consumePullChunks([
+      JSON.stringify({status: "Status: Image is up to date for alpine:3.21"}) + "\n"
+    ], (progress) => {
+      delete progress.status
+    })
+  })
+
+  it("pull stream completion is unaffected when onProgress assigns terminal status", async () => {
+    await expect(async () => {
+      await consumePullChunks([
+        JSON.stringify({status: "Pull complete", id: "abc123"}) + "\n"
+      ], (progress) => {
+        progress.status = "Status: Downloaded newer image for alpine:3.21"
+      })
+    }).toThrow("Docker pull response ended before Docker reported pull completion.")
+  })
+
+  it("pull stream rejects a top-level Docker error", async () => {
+    await expect(async () => {
+      await consumePullChunks([
+        JSON.stringify({error: "manifest unknown", errorDetail: {message: "manifest unknown"}}) + "\n"
+      ])
+    }).toThrow("Docker pull error: manifest unknown")
+  })
+
+  it("pull stream rejects an errorDetail-only Docker error", async () => {
+    await expect(async () => {
+      await consumePullChunks([
+        JSON.stringify({errorDetail: {message: "registry connection failed"}}) + "\n"
+      ])
+    }).toThrow("Docker pull error: registry connection failed")
+  })
+
+  it("pull stream decodes JSON split across arbitrary byte chunks", async () => {
+    const received = []
+    const payload = Buffer.from([
+      JSON.stringify({status: "Pulling café layer", id: "abc123"}),
+      JSON.stringify({status: "Status: Downloaded newer image for café/alpine:3.21"}),
+      ""
+    ].join("\n"))
+    const splitIndex = payload.indexOf(Buffer.from("é")) + 1
+
+    await consumePullChunks([payload.subarray(0, splitIndex), payload.subarray(splitIndex)], (progress) => received.push(progress))
+
+    expect(received.map((progress) => progress.status)).toEqual([
+      "Pulling café layer",
+      "Status: Downloaded newer image for café/alpine:3.21"
+    ])
+  })
+
+  it("pull stream parses multiple JSON frames from one chunk", async () => {
+    const received = []
+    const payload = [
+      JSON.stringify({status: "Pulling fs layer", id: "abc123"}),
+      JSON.stringify({status: "Status: Image is up to date for alpine:3.21"}),
+      ""
+    ].join("\n")
+
+    await consumePullChunks([payload], (progress) => received.push(progress))
+
+    expect(received.length).toEqual(2)
+    expect(received[0].status).toEqual("Pulling fs layer")
+    expect(received[1].status).toEqual("Status: Image is up to date for alpine:3.21")
+  })
+
+  it("pull stream rejects truncated terminal JSON", async () => {
+    let thrownError = null
+
+    try {
+      await consumePullChunks(["{\"status\":\"Status: Downloaded newer image for alpine:3.21\""])
+    } catch (error) {
+      thrownError = error
+    }
+
+    expect(thrownError?.message).toContain("Docker pull response contained malformed JSON:")
+  })
+
+  it("pull stream rejects invalid UTF-8 in otherwise terminal JSON", async () => {
+    const firstChunk = Buffer.concat([
+      Buffer.from("{\"status\":\"Status: Downloaded newer image for alpine:"),
+      Buffer.from([0xc3])
+    ])
+    const secondChunk = Buffer.concat([
+      Buffer.from([0x28]),
+      Buffer.from("\"}\n")
+    ])
+    let thrownError = null
+
+    try {
+      await consumePullChunks([firstChunk, secondChunk])
+    } catch (error) {
+      thrownError = error
+    }
+
+    expect(thrownError?.message).toContain("Docker pull response contained malformed UTF-8:")
+    expect(thrownError?.cause instanceof Error).toEqual(true)
+  })
+
+  it("pull stream rejects empty EOF", async () => {
+    await expect(async () => {
+      await consumePullChunks([])
+    }).toThrow("Docker pull response ended before Docker reported pull completion.")
+  })
+
+  it("pull stream rejects premature EOF after layer progress", async () => {
+    await expect(async () => {
+      await consumePullChunks([JSON.stringify({status: "Pull complete", id: "abc123"}) + "\n"])
+    }).toThrow("Docker pull response ended before Docker reported pull completion.")
+  })
+
+  it("pull() preserves AbortSignal cancellation while consuming progress", async () => {
+    const server = await createMockServer((_req, res) => {
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.write(JSON.stringify({status: "Pulling fs layer", id: "abc123"}) + "\n")
+    })
+    const port = server.address().port
+    const docker = Docker.open({host: "127.0.0.1", port})
+
+    try {
+      const abortController = new AbortController()
+      let pullPromise
+      const firstProgress = new Promise((resolve) => {
+        pullPromise = docker.images.pull({
+          image: "alpine:3.21",
+          signal: abortController.signal,
+          onProgress: resolve
+        })
+
+        pullPromise.catch(() => {})
+      })
+
+      await firstProgress
+      abortController.abort()
+
+      await expect(async () => await pullPromise).toThrow("Request aborted.")
     } finally {
       docker.close()
       server.close()

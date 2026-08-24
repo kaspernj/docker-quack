@@ -1,4 +1,35 @@
+import {TextDecoder} from "node:util"
 import DockerImageTagger from "./image-tagging.js"
+
+const PULL_SUCCESS_STATUS_PREFIXES = [
+  "Status: Downloaded newer image for ",
+  "Status: Image is up to date for "
+]
+
+/**
+ * @param {"JSON" | "UTF-8"} format
+ * @param {unknown} cause
+ * @returns {Error}
+ */
+function malformedPullResponseError(format, cause) {
+  const detail = cause instanceof Error ? `: ${cause.message}` : ""
+  const error = new Error(`Docker pull response contained malformed ${format}${detail}`)
+
+  Object.defineProperty(error, "cause", {configurable: true, value: cause})
+
+  return error
+}
+
+/**
+ * @param {string} image
+ * @returns {string}
+ */
+function imageReferenceWithDefaultTag(image) {
+  if (image.includes("@")) return image
+  if (image.lastIndexOf(":") > image.lastIndexOf("/")) return image
+
+  return `${image}:latest`
+}
 
 /**
  * @typedef {object} DockerRegistryAuth
@@ -14,6 +45,7 @@ import DockerImageTagger from "./image-tagging.js"
  * @property {string} [progress] - Human-readable progress text.
  * @property {{current?: number, total?: number}} [progressDetail] - Numeric pull progress details.
  * @property {string} [error] - Docker pull error text.
+ * @property {{code?: number, message?: string}} [errorDetail] - Structured Docker pull error.
  */
 
 /**
@@ -42,7 +74,7 @@ import DockerImageTagger from "./image-tagging.js"
 
 /**
  * @typedef {object} PullOptions
- * @property {string} image - Image name with optional tag (e.g. "postgres:16")
+ * @property {string} image - Image name with optional tag or digest (e.g. "postgres:16"). Untagged names default to `latest`.
  * @property {DockerRegistryAuth} [auth] - Registry authentication
  * @property {(progress: DockerImagePullProgress) => void} [onProgress] - Called with each progress object as it arrives
  * @property {AbortSignal} [signal] - Optional abort signal to cancel the pull stream.
@@ -69,7 +101,7 @@ class DockerImages {
   }
 
   /**
-   * Pull an image from a registry. Consumes the entire streaming response before resolving.
+   * Pull an image from a registry. Resolves only after Docker reports a terminal success result.
    * When auth is provided, it is sent as a base64-encoded JSON X-Registry-Auth header.
    * @param {PullOptions} options
    * @returns {Promise<void>}
@@ -83,8 +115,7 @@ class DockerImages {
       headers["X-Registry-Auth"] = authPayload
     }
 
-    // Parse image name and tag for the fromImage query parameter
-    const query = {fromImage: options.image}
+    const query = {fromImage: imageReferenceWithDefaultTag(options.image)}
 
     const {stream} = await this.connection.requestStream({
       method: "POST",
@@ -188,66 +219,69 @@ class DockerImages {
 
   /**
    * Consume the pull progress stream. Docker streams newline-delimited JSON objects
-   * with progress info. If any object contains an error field, throw it.
+   * with progress info. Docker errors and invalid or incomplete streams reject the pull.
    * When onProgress is provided, each parsed JSON object is forwarded live.
    * @param {import("node:stream").Readable} stream
    * @param {(progress: DockerImagePullProgress) => void} [onProgress] - Called with each progress object as it arrives
    * @returns {Promise<void>}
    */
-  consumePullStream(stream, onProgress) {
-    return new Promise((resolve, reject) => {
-      let buffer = ""
+  async consumePullStream(stream, onProgress) {
+    const decoder = new TextDecoder("utf-8", {fatal: true})
+    let buffer = ""
+    let finalFrameWasTerminalSuccess = false
 
-      stream.on("data", (chunk) => {
-        buffer += chunk.toString("utf-8")
+    const decodeChunk = (chunk, streaming) => {
+      try {
+        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk
 
-        // Parse complete newline-delimited JSON lines
-        let newlineIndex
+        return decoder.decode(bytes, {stream: streaming})
+      } catch (error) {
+        throw malformedPullResponseError("UTF-8", error)
+      }
+    }
 
-        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, newlineIndex).trim()
+    const consumeLine = (line) => {
+      if (!line) return
 
-          buffer = buffer.slice(newlineIndex + 1)
+      let progress
 
-          if (!line) continue
+      try {
+        progress = JSON.parse(line)
+      } catch (error) {
+        throw malformedPullResponseError("JSON", error)
+      }
 
-          try {
-            const parsed = JSON.parse(line)
+      const errorMessage = progress.errorDetail?.message || progress.error
 
-            if (parsed.error) {
-              reject(new Error(`Docker pull error: ${parsed.error}`))
-              return
-            }
+      if (errorMessage) {
+        throw new Error(`Docker pull error: ${errorMessage}`)
+      }
 
-            if (onProgress) onProgress(parsed)
-          } catch {
-            // Non-JSON lines are ignored
-          }
-        }
-      })
-      stream.on("error", reject)
-      stream.on("end", () => {
-        // Parse any remaining buffered content
-        const remaining = buffer.trim()
+      finalFrameWasTerminalSuccess = (
+        typeof progress.status === "string" &&
+        PULL_SUCCESS_STATUS_PREFIXES.some((prefix) => progress.status.startsWith(prefix) && progress.status.length > prefix.length)
+      )
 
-        if (remaining) {
-          try {
-            const parsed = JSON.parse(remaining)
+      if (onProgress) onProgress(progress)
+    }
 
-            if (parsed.error) {
-              reject(new Error(`Docker pull error: ${parsed.error}`))
-              return
-            }
+    for await (const chunk of stream) {
+      buffer += decodeChunk(chunk, true)
 
-            if (onProgress) onProgress(parsed)
-          } catch {
-            // Non-JSON lines are ignored
-          }
-        }
+      let newlineIndex
 
-        resolve()
-      })
-    })
+      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+        consumeLine(buffer.slice(0, newlineIndex).trim())
+        buffer = buffer.slice(newlineIndex + 1)
+      }
+    }
+
+    buffer += decodeChunk(undefined, false)
+    consumeLine(buffer.trim())
+
+    if (!finalFrameWasTerminalSuccess) {
+      throw new Error("Docker pull response ended before Docker reported pull completion.")
+    }
   }
 }
 
