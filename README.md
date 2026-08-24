@@ -18,7 +18,7 @@ Docker Engine API client with HTTP keep-alive for Node.js.
 - Image tagging handles existing destination tags idempotently
 - TLS client certificate support
 - Configurable timeouts for Docker API requests and high-level commands
-- Optional Socketduct HTTP agent helper for resilient Docker transports
+- First-class optional Socketduct HTTP and target HTTPS/mTLS transports
 
 ## Installation
 
@@ -44,6 +44,18 @@ const docker = Docker.open({
   tls: {ca: caCert, cert: clientCert, key: clientKey}
 })
 
+// Or select one of the four high-level transports explicitly
+import {openDockerTransport} from "docker-quack"
+
+const dockerViaUnix = openDockerTransport({type: "unix", socketPath: "/var/run/docker.sock"})
+const dockerViaHttp = openDockerTransport({type: "http", host: "docker-host", port: 2375})
+const dockerViaHttps = openDockerTransport({
+  type: "https",
+  host: "docker-host",
+  port: 2376,
+  tls: {ca: caCert, cert: clientCert, key: clientKey}
+})
+
 // Connect through a custom Node HTTP agent or socket factory
 const dockerViaAgent = Docker.open({host: "docker-host", port: 2375, agent: customHttpAgent})
 const dockerViaFactory = Docker.open({
@@ -55,16 +67,32 @@ const dockerViaFactory = Docker.open({
 
 // Connect through Socketduct without making Socketduct a hard docker-quack dependency
 import {SocketductHttpAgent} from "socketduct/http"
-import {openDockerOverSocketduct} from "docker-quack/src/socketduct.js"
+import {SocketductHttpsAgent} from "socketduct/https"
 
-const dockerViaSocketduct = openDockerOverSocketduct({
+const dockerViaSocketduct = openDockerTransport({
+  type: "socketduct",
   SocketductHttpAgent,
+  SocketductHttpsAgent,
   relay: {host: "relay.example.internal", port: 3100, token: process.env.SOCKETDUCT_TOKEN},
-  target: {host: "docker-socket-shim", port: 2375},
+  relayTls: {caFile: "/certs/relay-ca.pem", servername: "relay.example.internal"},
+  target: {host: "docker-socket-shim", port: 2376},
+  targetTls: {
+    ca: dockerCa,
+    cert: dockerClientCert,
+    key: dockerClientKey
+  },
+  dockerHost: "docker.internal.example",
+  dockerPort: 2376,
   spoolDirectory: "/var/lib/my-app/socketduct-spool",
   sessionNamePrefix: "my-app-docker"
 })
 ```
+
+The selector is separate from the existing low-level `Docker.open({transport})` SnapReq override, which remains available unchanged for advanced integrations. `openDockerOverSocketduct()` and the legacy `openDockerOverSeamline()` alias also remain available.
+
+Socketduct stays optional: inject `SocketductHttpAgent` for plaintext Docker targets and `SocketductHttpsAgent` when `targetTls` is present. `relayTls` protects the edge-to-relay hop; `targetTls` independently protects the tunneled Docker connection and is never wrapped in another TLS factory. `target.host`/`target.port` select the real TCP route, while `dockerHost`/`dockerPort` form Docker's logical URL and `Host` header. When `targetTls.servername` is omitted, `dockerHost` is used as the target certificate identity; Socketduct handles strict IP verification without IP-literal SNI.
+
+The returned Socketduct client exposes `socketductAgent`. Calling `docker.close()` is idempotent for this transport and destroys that owned agent exactly once. Initial target recovery is owned by Socketduct before readiness; docker-quack does not replay established Docker operations.
 
 Docker connections reuse HTTP sockets by default. Set `keepAlive: false` when each completed request must release its connection, including connections created by `createConnection` or `createTlsConnection`. A caller-supplied `agent` or `httpsAgent` owns its own pooling policy and should be constructed with the matching setting.
 
