@@ -32,11 +32,12 @@ export function openDockerOverSocketduct(options) {
     target,
     dockerHost = target.host,
     dockerPort = target.port,
+    keepAlive,
     timeoutMs,
     ...agentOptions
   } = options
-  const socketductAgent = new SocketductHttpAgent({...agentOptions, target})
-  const docker = Docker.open({host: dockerHost, port: dockerPort, agent: socketductAgent, timeoutMs})
+  const socketductAgent = new SocketductHttpAgent({...agentOptions, target, ...(keepAlive === undefined ? {} : {keepAlive})})
+  const docker = Docker.open({host: dockerHost, port: dockerPort, agent: socketductAgent, keepAlive, timeoutMs})
   const closeDocker = docker.close.bind(docker)
 
   const socketductDocker = Object.assign(docker, {socketductAgent})
