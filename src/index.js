@@ -37,6 +37,7 @@ import DockerVolumes from "./volumes.js"
  * @property {number} port - Docker port
  * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {import("./docker-connection.js").TlsOptions} [tls] - TLS options for HTTPS connections
+ * @property {boolean} [keepAlive] - Reuse HTTP connections across requests. Defaults to true.
  * @property {number} [timeoutMs] - Per-request timeout for buffered Docker API requests
  * @property {import("node:http").Agent} [agent] - Custom HTTP agent, for example an agent that opens sockets through a tunnel
  * @property {import("node:https").Agent} [httpsAgent] - Custom HTTPS agent

@@ -8,7 +8,7 @@ import NodeTransport from "snapreq/transports/node-transport"
  * @typedef {object} CustomNodeTransportOptions
  * @property {string} [socketPath] - Unix socket path.
  * @property {{ca?: string | Buffer, cert?: string | Buffer, key?: string | Buffer, rejectUnauthorized?: boolean}} [tls] - TLS material for HTTPS connections.
- * @property {boolean} [keepAlive] - Reuse connections across requests.
+ * @property {boolean} [keepAlive] - Reuse connections across requests. Defaults to true.
  * @property {import("node:http").Agent} [agent] - Custom HTTP agent.
  * @property {import("node:https").Agent} [httpsAgent] - Custom HTTPS agent.
  * @property {CreateConnection} [createConnection] - Custom socket factory for HTTP requests.

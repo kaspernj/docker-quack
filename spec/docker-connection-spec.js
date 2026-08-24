@@ -1,8 +1,11 @@
 import http from "node:http"
+import https from "node:https"
 import net from "node:net"
+import tls from "node:tls"
 import * as zlib from "node:zlib"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
 import DockerConnection from "../src/docker-connection.js"
+import {TLS_CERT, TLS_KEY} from "./support/tls-fixture.js"
 
 const supportedResponseContentEncodings = () => [
   "gzip",
@@ -54,6 +57,199 @@ describe("DockerConnection", () => {
       expect(connection.socketPath).toEqual(undefined)
     } finally {
       connection.close()
+    }
+  })
+
+  it("keeps direct Docker HTTP connections alive by default", async () => {
+    let connectionCount = 0
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({ok: true}))
+    })
+    server.on("connection", () => {
+      connectionCount += 1
+    })
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port})
+
+    try {
+      await connection.request({method: "GET", path: "/first"})
+      await connection.request({method: "GET", path: "/second"})
+
+      expect(connection.client._nodeConfig.keepAlive).toEqual(true)
+      expect(connectionCount).toEqual(1)
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("releases completed direct HTTP connections when keep-alive is disabled", async () => {
+    const activeSockets = new Set()
+    const closedSockets = []
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({ok: true}))
+    })
+    server.on("connection", (socket) => {
+      activeSockets.add(socket)
+      closedSockets.push(new Promise((resolve) => socket.once("close", resolve)))
+      socket.once("close", () => activeSockets.delete(socket))
+    })
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port, keepAlive: false})
+
+    try {
+      await connection.request({method: "GET", path: "/first"})
+      await closedSockets[0]
+      await connection.request({method: "GET", path: "/second"})
+      await closedSockets[1]
+
+      expect(connection.client._nodeConfig.keepAlive).toEqual(false)
+      expect(closedSockets).toHaveLength(2)
+      expect(activeSockets.size).toEqual(0)
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("keeps an active custom-socket response open until its owner completes", async () => {
+    const activeSockets = new Set()
+    let finishResponse
+    let responseStarted
+    const responseStartedPromise = new Promise((resolve) => {
+      responseStarted = resolve
+    })
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.write('{"ok":')
+      finishResponse = () => res.end("true}")
+      responseStarted()
+    })
+    server.on("connection", (socket) => {
+      activeSockets.add(socket)
+      socket.once("close", () => activeSockets.delete(socket))
+    })
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({
+      host: "docker.invalid",
+      port: 2375,
+      keepAlive: false,
+      createConnection(_options, callback) {
+        return net.connect({host: "127.0.0.1", port}, callback)
+      }
+    })
+
+    try {
+      const resultPromise = connection.request({method: "GET", path: "/active"})
+
+      await responseStartedPromise
+      expect(activeSockets.size).toEqual(1)
+
+      finishResponse()
+      expect(await resultPromise).toEqual({ok: true})
+      await new Promise((resolve) => [...activeSockets][0]?.once("close", resolve) ?? resolve())
+
+      expect(activeSockets.size).toEqual(0)
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("releases repeated completed HTTPS socket-factory connections when keep-alive is disabled", async () => {
+    const activeSockets = new Set()
+    const closedSockets = []
+    let createConnectionCalls = 0
+    const server = https.createServer({cert: TLS_CERT, key: TLS_KEY}, (_req, res) => {
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({ok: true}))
+    })
+    server.on("connection", (socket) => {
+      activeSockets.add(socket)
+      closedSockets.push(new Promise((resolve) => socket.once("close", resolve)))
+      socket.once("close", () => activeSockets.delete(socket))
+    })
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({
+      host: "docker.invalid",
+      port: 2376,
+      keepAlive: false,
+      tls: {ca: TLS_CERT},
+      createTlsConnection(options, callback) {
+        createConnectionCalls += 1
+        let settled = false
+        const socket = tls.connect({...options, host: "127.0.0.1", port, servername: "localhost"})
+        const settle = (error) => {
+          if (settled) return
+          settled = true
+          socket.off("secureConnect", onConnect)
+          socket.off("error", onError)
+          callback?.(error, error ? undefined : socket)
+        }
+        const onConnect = () => settle(null)
+        const onError = (error) => settle(error)
+
+        socket.once("secureConnect", onConnect)
+        socket.once("error", onError)
+        return socket
+      }
+    })
+
+    try {
+      await connection.request({method: "GET", path: "/first"})
+      await closedSockets[0]
+      await connection.request({method: "GET", path: "/second"})
+      await closedSockets[1]
+
+      const transport = connection.client._transportPreference
+
+      expect(transport.keepAlive).toEqual(false)
+      expect(transport._httpsAgent.options.keepAlive).toEqual(false)
+      expect(createConnectionCalls).toEqual(2)
+      expect(activeSockets.size).toEqual(0)
+      expect(Object.keys(transport._httpsAgent.sockets)).toHaveLength(0)
+      expect(Object.keys(transport._httpsAgent.freeSockets)).toHaveLength(0)
+    } finally {
+      connection.close()
+      server.close()
+    }
+  })
+
+  it("recovers from a failed request without poisoning a long-lived connection object", async () => {
+    let requestCount = 0
+    const server = http.createServer((req, res) => {
+      requestCount += 1
+
+      if (requestCount === 1) {
+        req.socket.destroy()
+        return
+      }
+
+      res.writeHead(200, {"Content-Type": "application/json"})
+      res.end(JSON.stringify({ok: true}))
+    })
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const port = server.address().port
+    const connection = new DockerConnection({host: "127.0.0.1", port, keepAlive: false})
+
+    try {
+      await expect(async () => await connection.request({method: "GET", path: "/failed"})).toThrow()
+      expect(await connection.request({method: "GET", path: "/successful"})).toEqual({ok: true})
+      expect(requestCount).toEqual(2)
+    } finally {
+      connection.close()
+      server.close()
     }
   })
 

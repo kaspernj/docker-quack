@@ -52,6 +52,7 @@ import CustomNodeTransport from "./custom-node-transport.js"
  * @property {number} port - Docker port
  * @property {string} [socketPath] - Unix socket path for local Docker daemons
  * @property {TlsOptions} [tls] - TLS options for HTTPS connections
+ * @property {boolean} [keepAlive] - Reuse HTTP connections across requests. Defaults to true.
  * @property {number} [timeoutMs] - Per-request timeout for buffered requests. An unreachable host that accepts the connection but never responds would otherwise hang forever. Defaults to 120000ms. Set to 0 to disable.
  * @property {import("node:http").Agent} [agent] - Custom HTTP agent for callers that need to supply their own socket transport.
  * @property {import("node:https").Agent} [httpsAgent] - Custom HTTPS agent for callers that need to supply their own socket transport.
@@ -134,6 +135,7 @@ class DockerConnection {
     this.socketPath = options.socketPath
     this.tls = options.tls
     this.useTls = !!options.tls || !!options.httpsAgent || !!options.createTlsConnection
+    this.keepAlive = options.keepAlive ?? true
     this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
 
     const protocol = this.useTls ? "https" : "http"
@@ -149,7 +151,7 @@ class DockerConnection {
       baseUrl,
       socketPath: this.socketPath,
       tls: options.tls,
-      keepAlive: true,
+      keepAlive: this.keepAlive,
       transport
     })
   }
@@ -165,7 +167,7 @@ class DockerConnection {
       return new CustomNodeTransport({
         socketPath: options.socketPath,
         tls: options.tls,
-        keepAlive: true,
+        keepAlive: this.keepAlive,
         agent: options.agent,
         httpsAgent: options.httpsAgent,
         createConnection: options.createConnection,

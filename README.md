@@ -49,6 +49,7 @@ const dockerViaAgent = Docker.open({host: "docker-host", port: 2375, agent: cust
 const dockerViaFactory = Docker.open({
   host: "docker-host",
   port: 2375,
+  keepAlive: false,
   createConnection: (_options, callback) => customSocketFactory(callback)
 })
 
@@ -64,6 +65,8 @@ const dockerViaSocketduct = openDockerOverSocketduct({
   sessionNamePrefix: "my-app-docker"
 })
 ```
+
+Docker connections reuse HTTP sockets by default. Set `keepAlive: false` when each completed request must release its connection, including connections created by `createConnection` or `createTlsConnection`. A caller-supplied `agent` or `httpsAgent` owns its own pooling policy and should be constructed with the matching setting.
 
 ### Timeouts
 
