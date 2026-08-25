@@ -46,11 +46,15 @@ describe("Docker", () => {
   })
 
   it("Docker.open() accepts a Unix socket path", () => {
-    const docker = Docker.open({host: "127.0.0.1", port: 2375, socketPath: "/var/run/docker.sock"})
+    const docker = Docker.open({socketPath: "/var/run/docker.sock"})
 
     try {
       expect(docker).toBeInstanceOf(Docker)
+      expect(docker.connection.host).toEqual(undefined)
+      expect(docker.connection.port).toEqual(undefined)
       expect(docker.connection.socketPath).toEqual("/var/run/docker.sock")
+      expect(docker.connection.keepAlive).toEqual(true)
+      expect(docker.connection.client.baseUrl).toEqual("http://localhost")
     } finally {
       docker.close()
     }
