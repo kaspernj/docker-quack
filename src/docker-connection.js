@@ -47,10 +47,7 @@ import CustomNodeTransport from "./custom-node-transport.js"
  */
 
 /**
- * @typedef {object} ConnectionOptions
- * @property {string} host - Docker host
- * @property {number} port - Docker port
- * @property {string} [socketPath] - Unix socket path for local Docker daemons
+ * @typedef {object} ConnectionBehaviorOptions
  * @property {TlsOptions} [tls] - TLS options for HTTPS connections
  * @property {boolean} [keepAlive] - Reuse HTTP connections across requests. Defaults to true.
  * @property {number} [timeoutMs] - Per-request timeout for buffered requests. An unreachable host that accepts the connection but never responds would otherwise hang forever. Defaults to 120000ms. Set to 0 to disable.
@@ -59,6 +56,15 @@ import CustomNodeTransport from "./custom-node-transport.js"
  * @property {import("./custom-node-transport.js").CreateConnection} [createConnection] - Custom HTTP socket factory used to build an internal agent.
  * @property {import("./custom-node-transport.js").CreateConnection} [createTlsConnection] - Custom HTTPS socket factory used to build an internal agent.
  * @property {import("snapreq/transports/select").TransportName | import("snapreq/transports/select").Transport} [transport] - SnapReq transport override for advanced integrations.
+ * @typedef {object} NetworkConnectionEndpoint
+ * @property {string} host - Docker host.
+ * @property {number} port - Docker port.
+ * @property {never} [socketPath] - Network connections do not use a Unix socket path.
+ * @typedef {object} UnixConnectionEndpoint
+ * @property {string} socketPath - Unix socket path for local Docker daemons.
+ * @property {never} [host] - Unix socket connections do not use a logical host.
+ * @property {never} [port] - Unix socket connections do not use a logical port.
+ * @typedef {(ConnectionBehaviorOptions & NetworkConnectionEndpoint) | (ConnectionBehaviorOptions & UnixConnectionEndpoint)} ConnectionOptions
  */
 
 /**

@@ -33,26 +33,13 @@ import {openDockerOverSocketduct} from "./socketduct.js"
  */
 
 /**
- * @typedef {object} DockerOpenOptions
- * @property {string} host - Docker host
- * @property {number} port - Docker port
- * @property {string} [socketPath] - Unix socket path for local Docker daemons
- * @property {import("./docker-connection.js").TlsOptions} [tls] - TLS options for HTTPS connections
- * @property {boolean} [keepAlive] - Reuse HTTP connections across requests. Defaults to true.
- * @property {number} [timeoutMs] - Per-request timeout for buffered Docker API requests
- * @property {import("node:http").Agent} [agent] - Custom HTTP agent, for example an agent that opens sockets through a tunnel
- * @property {import("node:https").Agent} [httpsAgent] - Custom HTTPS agent
- * @property {import("./custom-node-transport.js").CreateConnection} [createConnection] - Custom HTTP socket factory used to build an internal agent
- * @property {import("./custom-node-transport.js").CreateConnection} [createTlsConnection] - Custom HTTPS socket factory used to build an internal agent
- * @property {import("snapreq/transports/select").TransportName | import("snapreq/transports/select").Transport} [transport] - SnapReq transport override
+ * @typedef {import("./docker-connection.js").ConnectionOptions} DockerOpenOptions
  */
 
 /**
  * @typedef {object} UnixDockerTransportSelector
  * @property {"unix"} type - Unix socket transport.
  * @property {string} socketPath - Docker Unix socket path.
- * @property {string} [host] - Logical HTTP host. Defaults to localhost.
- * @property {number} [port] - Logical HTTP port. Defaults to 2375.
  * @property {boolean} [keepAlive] - Reuse HTTP connections.
  * @property {number} [timeoutMs] - Buffered request timeout.
  * @typedef {object} HttpDockerTransportSelector
@@ -175,13 +162,12 @@ export function openDockerTransport(selector) {
     if (typeof selector.socketPath !== "string" || selector.socketPath.length === 0) {
       throw new TypeError("Unix Docker transport requires socketPath")
     }
-    return Docker.open({
-      host: selector.host ?? "localhost",
-      port: selector.port ?? 2375,
+    const unixOptions = {
       socketPath: selector.socketPath,
       keepAlive: selector.keepAlive,
       timeoutMs: selector.timeoutMs
-    })
+    }
+    return Docker.open(unixOptions)
   }
 
   if (selector.type === "http") {

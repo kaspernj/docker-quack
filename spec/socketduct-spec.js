@@ -146,6 +146,10 @@ describe("Socketduct compatibility exports", () => {
     try {
       expect(unix).toBeInstanceOf(Docker)
       expect(unix.connection.socketPath).toEqual("/var/run/docker.sock")
+      expect(unix.connection.host).toEqual(undefined)
+      expect(unix.connection.port).toEqual(undefined)
+      expect(unix.connection.keepAlive).toEqual(true)
+      expect(unix.connection.client.baseUrl).toEqual("http://localhost")
       expect(plain.connection.client.baseUrl).toEqual("http://docker-http.example:2375")
       expect(secure.connection.client.baseUrl).toEqual("https://docker-https.example:2376")
       expect(socketduct.connection.client.baseUrl).toEqual("http://docker-logical.example:1234")
@@ -155,6 +159,29 @@ describe("Socketduct compatibility exports", () => {
       plain.close()
       secure.close()
       socketduct.close()
+    }
+  })
+
+  it("forwards only effective Unix selector options and preserves Unix defaults", () => {
+    const selector = {
+      type: "unix",
+      socketPath: "/var/run/docker-selector.sock",
+      keepAlive: false,
+      timeoutMs: 4_321
+    }
+    const snapshot = {...selector}
+    const docker = DockerQuack.openDockerTransport(selector)
+
+    try {
+      expect(docker.connection.host).toEqual(undefined)
+      expect(docker.connection.port).toEqual(undefined)
+      expect(docker.connection.socketPath).toEqual("/var/run/docker-selector.sock")
+      expect(docker.connection.keepAlive).toEqual(false)
+      expect(docker.connection.timeoutMs).toEqual(4_321)
+      expect(docker.connection.client.baseUrl).toEqual("http://localhost")
+      expect(selector).toEqual(snapshot)
+    } finally {
+      docker.close()
     }
   })
 
