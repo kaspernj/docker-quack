@@ -25,6 +25,6 @@
     "velocious": "1.0.570"
   },
   "dependencies": {
-    "snapreq": "0.0.10"
+    "snapreq": "0.0.13"
   }
 }
