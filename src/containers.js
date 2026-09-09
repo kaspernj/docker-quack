@@ -496,7 +496,7 @@ class DockerContainers {
 
   /**
    * Upload a tar archive to a container path.
-   * @param {{id: string, path: string, archive: Buffer | import("node:stream").Readable, archiveCompression?: ArchiveCompression, signal?: AbortSignal, timeoutMs?: number}} options
+   * @param {{id: string, path: string, archive: Buffer | import("node:stream").Readable, archiveCompression?: ArchiveCompression, signal?: AbortSignal, timeoutMs?: number, idleTimeoutMs?: number}} options
    * @returns {Promise<void>}
    */
   async putArchive(options) {
@@ -506,6 +506,7 @@ class DockerContainers {
       query: {path: options.path},
       body: this.archiveBody(options.archive, options.archiveCompression || "gzip"),
       headers: {"Content-Type": "application/x-tar"},
+      idleTimeoutMs: options.idleTimeoutMs,
       ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
@@ -546,7 +547,7 @@ class DockerContainers {
 
   /**
    * Download a tar archive of a container path.
-   * @param {{id: string, path: string, signal?: AbortSignal, timeoutMs?: number}} options
+   * @param {{id: string, path: string, signal?: AbortSignal, timeoutMs?: number, idleTimeoutMs?: number}} options
    * @returns {Promise<Buffer>}
    */
   async getArchive(options) {
@@ -554,6 +555,7 @@ class DockerContainers {
       method: "GET",
       path: `/containers/${options.id}/archive`,
       query: {path: options.path},
+      idleTimeoutMs: options.idleTimeoutMs,
       ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
@@ -561,7 +563,7 @@ class DockerContainers {
 
   /**
    * Download a tar archive of a container path as a readable stream.
-   * @param {{id: string, path: string, signal?: AbortSignal, timeoutMs?: number}} options
+   * @param {{id: string, path: string, signal?: AbortSignal, timeoutMs?: number, idleTimeoutMs?: number}} options
    * @returns {Promise<import("node:stream").Readable>}
    */
   async getArchiveStream(options) {
@@ -569,6 +571,7 @@ class DockerContainers {
       method: "GET",
       path: `/containers/${options.id}/archive`,
       query: {path: options.path},
+      idleTimeoutMs: options.idleTimeoutMs,
       ...(options.signal ? {signal: options.signal} : {}),
       timeoutMs: options.timeoutMs
     })
