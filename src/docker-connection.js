@@ -451,7 +451,14 @@ class DockerConnection {
     }
 
     if (response.status >= 400) {
-      const buffer = await response.buffer()
+      let buffer
+
+      try {
+        buffer = await response.buffer()
+      } catch (error) {
+        throw this.mapSnapReqTimeoutError(error, options.method, fullPath, timeoutMs)
+      }
+
       let message
 
       try {

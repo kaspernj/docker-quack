@@ -793,6 +793,45 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("maps idle timeouts while buffering streaming error responses", async () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
+
+    connection.client = {
+      async requestStream() {
+        return {
+          status: 500,
+          async buffer() {
+            throw new SnapReqIdleTimeoutError({
+              method: "GET",
+              url: "http://127.0.0.1:2375/containers/abc/archive",
+              idleTimeoutMs: 8_765,
+              phase: "response_body"
+            })
+          }
+        }
+      },
+      close() {}
+    }
+
+    try {
+      let thrownError
+
+      try {
+        await connection.requestStream({method: "GET", path: "/containers/abc/archive", idleTimeoutMs: 8_765, timeoutMs: 0})
+      } catch (error) {
+        thrownError = error
+      }
+
+      expect(thrownError).toBeInstanceOf(DockerConnectionTimeoutError)
+      expect(thrownError.timeoutKind).toEqual("idle")
+      expect(thrownError.timeoutMs).toEqual(8_765)
+      expect(thrownError.idleTimeoutMs).toEqual(8_765)
+      expect(thrownError.phase).toEqual("response_body")
+    } finally {
+      connection.close()
+    }
+  })
+
   it("fails clearly for unsupported response content encodings", async () => {
     const server = http.createServer((_req, res) => {
       res.writeHead(200, {"Content-Encoding": "compress", "Content-Type": "application/json"})
