@@ -1,10 +1,12 @@
 import http from "node:http"
 import https from "node:https"
 import net from "node:net"
+import {Readable} from "node:stream"
 import tls from "node:tls"
 import * as zlib from "node:zlib"
+import {SnapReqIdleTimeoutError} from "snapreq/errors"
 import {describe, expect, it} from "velocious/build/src/testing/test.js"
-import DockerConnection from "../src/docker-connection.js"
+import DockerConnection, {DockerConnectionTimeoutError} from "../src/docker-connection.js"
 import {TLS_CERT, TLS_KEY} from "./support/tls-fixture.js"
 
 const supportedResponseContentEncodings = () => [
@@ -554,6 +556,29 @@ describe("DockerConnection", () => {
     }
   })
 
+  it("preserves SnapReq idle timeout classification", () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
+    const error = new SnapReqIdleTimeoutError({
+      method: "GET",
+      url: "http://127.0.0.1:2375/containers/abc/archive",
+      idleTimeoutMs: 8_765,
+      phase: "response_body"
+    })
+
+    try {
+      const mapped = connection.mapSnapReqTimeoutError(error, "GET", "/containers/abc/archive", 0)
+
+      expect(mapped).toBeInstanceOf(DockerConnectionTimeoutError)
+      expect(mapped.message).toEqual("Docker request made no progress for 8765ms during response_body: GET /containers/abc/archive")
+      expect(mapped.timeoutKind).toEqual("idle")
+      expect(mapped.timeoutMs).toEqual(8_765)
+      expect(mapped.idleTimeoutMs).toEqual(8_765)
+      expect(mapped.phase).toEqual("response_body")
+    } finally {
+      connection.close()
+    }
+  })
+
   it("requests supported response content encodings by default", async () => {
     let acceptEncoding = null
 
@@ -763,6 +788,45 @@ describe("DockerConnection", () => {
           chunks.push(chunk)
         }
       }).toThrow("Docker request timed out after 120000ms: POST /exec/exec-123/start")
+    } finally {
+      connection.close()
+    }
+  })
+
+  it("maps idle timeouts while buffering streaming error responses", async () => {
+    const connection = new DockerConnection({host: "127.0.0.1", port: 2375})
+
+    connection.client = {
+      async requestStream() {
+        return {
+          status: 500,
+          async buffer() {
+            throw new SnapReqIdleTimeoutError({
+              method: "GET",
+              url: "http://127.0.0.1:2375/containers/abc/archive",
+              idleTimeoutMs: 8_765,
+              phase: "response_body"
+            })
+          }
+        }
+      },
+      close() {}
+    }
+
+    try {
+      let thrownError
+
+      try {
+        await connection.requestStream({method: "GET", path: "/containers/abc/archive", idleTimeoutMs: 8_765, timeoutMs: 0})
+      } catch (error) {
+        thrownError = error
+      }
+
+      expect(thrownError).toBeInstanceOf(DockerConnectionTimeoutError)
+      expect(thrownError.timeoutKind).toEqual("idle")
+      expect(thrownError.timeoutMs).toEqual(8_765)
+      expect(thrownError.idleTimeoutMs).toEqual(8_765)
+      expect(thrownError.phase).toEqual("response_body")
     } finally {
       connection.close()
     }
@@ -1110,9 +1174,10 @@ describe("DockerConnection", () => {
     }
   })
 
-  it("forwards the caller's abort signal and timeoutMs to SnapReq for buffered requests", async () => {
+  it("forwards buffered request options including idleTimeoutMs to SnapReq", async () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375, timeoutMs: 120_000})
     const signal = new AbortController().signal
+    const body = Buffer.from("request body")
     let captured = null
 
     connection.client = {
@@ -1125,18 +1190,33 @@ describe("DockerConnection", () => {
     }
 
     try {
-      await connection.requestRaw({method: "GET", path: "/_ping", signal, timeoutMs: 4_321})
+      await connection.requestRaw({
+        method: "POST",
+        path: "/_ping",
+        body,
+        headers: {"X-Request-Test": "buffered"},
+        idleTimeoutMs: 8_765,
+        retry: {tries: 1, waitMs: 0},
+        signal,
+        timeoutMs: 4_321
+      })
 
+      expect(captured.method).toEqual("POST")
+      expect(captured.path).toEqual("/_ping")
+      expect(captured.body).toEqual(body)
+      expect(captured.headers["X-Request-Test"]).toEqual("buffered")
       expect(captured.signal).toEqual(signal)
       expect(captured.timeoutMs).toEqual(4_321)
+      expect(captured.idleTimeoutMs).toEqual(8_765)
     } finally {
       connection.close()
     }
   })
 
-  it("forwards the caller's abort signal and timeoutMs to SnapReq for streaming requests", async () => {
+  it("forwards streaming request options including idleTimeoutMs to SnapReq", async () => {
     const connection = new DockerConnection({host: "127.0.0.1", port: 2375, timeoutMs: 120_000})
     const signal = new AbortController().signal
+    const body = Readable.from([Buffer.from("request stream")])
     let captured = null
 
     connection.client = {
@@ -1155,10 +1235,24 @@ describe("DockerConnection", () => {
     }
 
     try {
-      await connection.requestStream({method: "GET", path: "/stream", signal, timeoutMs: 4_321})
+      await connection.requestStream({
+        method: "POST",
+        path: "/stream",
+        body,
+        headers: {"X-Request-Test": "streaming"},
+        idleTimeoutMs: 8_765,
+        retry: true,
+        signal,
+        timeoutMs: 4_321
+      })
 
+      expect(captured.method).toEqual("POST")
+      expect(captured.path).toEqual("/stream")
+      expect(captured.body).toEqual(body)
+      expect(captured.headers["X-Request-Test"]).toEqual("streaming")
       expect(captured.signal).toEqual(signal)
       expect(captured.timeoutMs).toEqual(4_321)
+      expect(captured.idleTimeoutMs).toEqual(8_765)
     } finally {
       connection.close()
     }

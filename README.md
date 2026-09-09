@@ -98,12 +98,13 @@ Docker connections reuse HTTP sockets by default. Set `keepAlive: false` when ea
 
 ### Timeouts
 
-Buffered Docker API requests default to a 120000ms timeout. Override it on the connection or on a single request; use `0` to disable a timeout. Every high-level command accepts `timeoutMs`. Streaming commands (`pull`, `logs`, `exec`, and `getArchiveStream`) stay untimed by default so they can stay open, but an explicit `timeoutMs` on the command bounds that stream.
+Buffered Docker API requests default to a 120000ms absolute timeout. Override it on the connection or on a single request; use `0` to disable it. Every high-level command accepts `timeoutMs`. Streaming commands (`pull`, `logs`, `exec`, and `getArchiveStream`) stay untimed by default so they can stay open, but an explicit `timeoutMs` on the command bounds that stream. Low-level requests and container archive transfers also accept an independent `idleTimeoutMs`, which resets on transport progress and leaves `timeoutMs` as the absolute deadline.
 
 ```js
 const docker = Docker.open({host: "127.0.0.1", port: 2375, timeoutMs: 30000})
 const version = await docker.connection.request({method: "GET", path: "/version", timeoutMs: 5000})
 await docker.containers.logs({id: "container-id", follow: true, timeoutMs: 300000})
+const archive = await docker.containers.getArchiveStream({id: "container-id", path: "/workspace", timeoutMs: 0, idleTimeoutMs: 30000})
 ```
 
 ### System info

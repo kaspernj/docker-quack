@@ -1,7 +1,7 @@
 import {Readable} from "node:stream"
 import * as zlib from "node:zlib"
 import SnapReq from "snapreq"
-import {SnapReqTimeoutError} from "snapreq/errors"
+import {SnapReqIdleTimeoutError, SnapReqTimeoutError} from "snapreq/errors"
 import CustomNodeTransport from "./custom-node-transport.js"
 
 /**
@@ -82,6 +82,7 @@ import CustomNodeTransport from "./custom-node-transport.js"
  * @property {AbortSignal} [signal] - Optional abort signal for streaming requests
  * @property {boolean | RetryOptions} [retry] - Retry transient Docker API or connection failures
  * @property {number} [timeoutMs] - Overrides the per-request timeout for this request. Buffered requests use the connection default when omitted; streaming requests only time out when this is set. Set to 0 to disable.
+ * @property {number} [idleTimeoutMs] - Inactivity timeout forwarded to SnapReq. Set to 0 to disable.
  */
 
 /**
@@ -110,10 +111,17 @@ export class DockerApiError extends Error {
   }
 }
 
-/** Thrown when a buffered Docker request exceeds its configured timeout. */
+/** Thrown when a Docker request exceeds its configured overall or inactivity timeout. */
 export class DockerConnectionTimeoutError extends Error {
   /**
-   * @param {{message: string, method: string, path: string, timeoutMs: number}} options
+   * @param {object} options
+   * @param {string} options.message
+   * @param {string} options.method
+   * @param {string} options.path
+   * @param {number} options.timeoutMs
+   * @param {"overall" | "idle"} [options.timeoutKind]
+   * @param {number} [options.idleTimeoutMs]
+   * @param {import("snapreq/control").HttpRequestProgressPhase} [options.phase]
    */
   constructor(options) {
     super(options.message)
@@ -121,6 +129,9 @@ export class DockerConnectionTimeoutError extends Error {
     this.method = options.method
     this.path = options.path
     this.timeoutMs = options.timeoutMs
+    this.timeoutKind = options.timeoutKind ?? "overall"
+    this.idleTimeoutMs = options.idleTimeoutMs
+    this.phase = options.phase
   }
 }
 
@@ -271,6 +282,7 @@ class DockerConnection {
         body: options.body,
         bodyCompression: options.bodyCompression,
         headers: this.requestHeaders(options.headers),
+        idleTimeoutMs: options.idleTimeoutMs,
         signal: options.signal,
         timeoutMs
       })
@@ -430,6 +442,7 @@ class DockerConnection {
         body: options.body,
         bodyCompression: options.bodyCompression,
         headers: this.requestHeaders(options.headers),
+        idleTimeoutMs: options.idleTimeoutMs,
         signal: options.signal,
         timeoutMs: options.timeoutMs
       })
@@ -438,7 +451,14 @@ class DockerConnection {
     }
 
     if (response.status >= 400) {
-      const buffer = await response.buffer()
+      let buffer
+
+      try {
+        buffer = await response.buffer()
+      } catch (error) {
+        throw this.mapSnapReqTimeoutError(error, options.method, fullPath, timeoutMs)
+      }
+
       let message
 
       try {
@@ -491,6 +511,18 @@ class DockerConnection {
    * @returns {unknown}
    */
   mapSnapReqTimeoutError(error, method, fullPath, timeoutMs) {
+    if (error instanceof SnapReqIdleTimeoutError) {
+      return new DockerConnectionTimeoutError({
+        message: `Docker request made no progress for ${error.idleTimeoutMs}ms during ${error.phase}: ${method} ${fullPath}`,
+        method,
+        path: fullPath,
+        timeoutMs: error.timeoutMs,
+        timeoutKind: "idle",
+        idleTimeoutMs: error.idleTimeoutMs,
+        phase: error.phase
+      })
+    }
+
     if (error instanceof SnapReqTimeoutError || this.rawConnectionTimeoutError(error)) {
       const effectiveTimeoutMs = error instanceof SnapReqTimeoutError ? error.timeoutMs || timeoutMs : timeoutMs
 
@@ -498,7 +530,8 @@ class DockerConnection {
         message: `Docker request timed out after ${effectiveTimeoutMs}ms: ${method} ${fullPath}`,
         method,
         path: fullPath,
-        timeoutMs: effectiveTimeoutMs
+        timeoutMs: effectiveTimeoutMs,
+        timeoutKind: "overall"
       })
     }
 

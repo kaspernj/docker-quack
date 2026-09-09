@@ -559,6 +559,34 @@ describe("DockerContainers", () => {
     }
   })
 
+  it("putArchive() forwards idleTimeoutMs without changing its other request options", async () => {
+    const connection = new FakeDockerConnection()
+    const containers = new DockerContainers(connection)
+    const archive = Buffer.from("tar payload")
+    const signal = new AbortController().signal
+
+    await containers.putArchive({
+      id: "container-123",
+      path: "/tmp/archive path",
+      archive,
+      archiveCompression: "identity",
+      idleTimeoutMs: 600_000,
+      signal,
+      timeoutMs: 0
+    })
+
+    expect(connection.calls).toEqual([{
+      method: "PUT",
+      path: "/containers/container-123/archive",
+      query: {path: "/tmp/archive path"},
+      body: archive,
+      headers: {"Content-Type": "application/x-tar"},
+      idleTimeoutMs: 600_000,
+      signal,
+      timeoutMs: 0
+    }])
+  })
+
   it("getArchiveStream() returns the connection stream without reading ahead and forwards its options", async () => {
     const archiveBytes = Buffer.from([0, 1, 2, 127, 128, 254, 255])
     const signal = new AbortController().signal
@@ -582,8 +610,9 @@ describe("DockerContainers", () => {
     const stream = await containers.getArchiveStream({
       id: "container-123",
       path: "/tmp/archive path",
+      idleTimeoutMs: 600_000,
       signal,
-      timeoutMs: 45_000
+      timeoutMs: 0
     })
 
     expect(stream === source).toEqual(true)
@@ -592,8 +621,9 @@ describe("DockerContainers", () => {
       method: "GET",
       path: "/containers/container-123/archive",
       query: {path: "/tmp/archive path"},
+      idleTimeoutMs: 600_000,
       signal,
-      timeoutMs: 45_000
+      timeoutMs: 0
     }])
 
     const chunks = []
