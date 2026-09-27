@@ -5,6 +5,8 @@ import DockerNetworks from "./networks.js"
 import DockerVolumes from "./volumes.js"
 import {openDockerOverSocketduct} from "./socketduct.js"
 
+export {createRecoverableSocketductTransport, RecoverableSocketductTransportError} from "./recoverable-socketduct-transport.js"
+
 /**
  * @typedef {object} DockerVersionResponse
  * @property {string} [Version] - Docker Engine version.

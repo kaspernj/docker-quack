@@ -1,0 +1,1 @@
+Add a recovery-aware Socketduct HTTP transport that buffers each Docker API request as one durable whole-write, withholds response ACKs until the journal commits the terminal result, and re-attaches a fresh response parser to a recovered virtual socket.
