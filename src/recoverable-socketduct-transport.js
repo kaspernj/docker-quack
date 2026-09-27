@@ -28,10 +28,15 @@ import {Duplex, Readable} from "node:stream"
 /**
  * Durable operation journal. TensorBuzz owns the implementation; the
  * transport treats it as the single source of truth for replay decisions and
- * stores no application state of its own.
+ * stores no application state of its own. A pending entry without a terminal
+ * marker means the operation may or may not have been sent: the transport
+ * admits the request only after `prepare` resolves and has no timeouts of
+ * its own (the request proxy's `setTimeout` is a no-op by design), so
+ * bounding the recovery of a never-sent operation is the journal owner's
+ * responsibility.
  * @typedef {object} RecoverableJournal
  * @property {(context: RecoverableOperationContext) => Promise<void>} prepare - Called before the request is sent; must durably persist the pending operation. A rejection is a pre-send failure and the transport never writes the request.
- * @property {(context: RecoverableOperationContext, result: RecoverableTerminalResult) => Promise<void>} commitTerminal - Called after the full response is parsed; the transport ACKs and closes only after this resolves.
+ * @property {(context: RecoverableOperationContext, result: RecoverableTerminalResult) => Promise<void>} commitTerminal - Called after the full response is parsed; the transport ACKs and closes only after this resolves. The commit is authoritative: once it succeeds the operation resolves even if the receive acknowledgement later fails.
  * @property {(context: RecoverableOperationContext, reason: RecoverableAmbiguousReason) => Promise<void>} markAmbiguous - Called when the operation cannot be resolved safely; the transport neither ACKs nor retries.
  */
 
@@ -69,7 +74,7 @@ import {Duplex, Readable} from "node:stream"
  * @typedef {object} RecoverableRequestOptions
  * @property {string} method - HTTP method.
  * @property {string} path - Request path including any query string.
- * @property {Record<string, string | number | Array<string | number>>} [headers] - Additional request headers. `Connection: close` and `Accept-Encoding: identity` are forced.
+ * @property {Record<string, string | number | Array<string | number>>} [headers] - Additional request headers. Caller-supplied `Connection`, `Accept-Encoding`, and `Expect` headers are dropped; `Connection: close` and `Accept-Encoding: identity` are forced.
  * @property {string | Buffer | Uint8Array} [body] - Complete buffered request body.
  * @property {RecoverableOperationContext} context - Operation context including the stable identifier.
  * @property {unknown} [bodyCompression] - Rejected: the transport never compresses requests.
@@ -78,7 +83,7 @@ import {Duplex, Readable} from "node:stream"
 /**
  * @typedef {object} RecoverableRecoveryOptions
  * @property {RecoverableTransportSet} [transportSet] - Replacement transport set; required by `recoverOperation`.
- * @property {string} [identifier] - Stable operation identifier; required by `recoverOperation`.
+ * @property {string} [identifier] - Stable operation identifier; required by `recoverOperation` and must equal `context.identifier`.
  * @property {RecoverableVirtualSocket} [socket] - Recovered virtual socket; required by `recoverReattachment`.
  * @property {string} method - Original HTTP method.
  * @property {string} path - Original request path.
@@ -97,7 +102,7 @@ import {Duplex, Readable} from "node:stream"
 
 /**
  * @typedef {object} RecoverableSocketductTransport
- * @property {(options: RecoverableRequestOptions) => Promise<RecoverableResponseResult>} request - Send one Docker API request as a durable whole-write and resolve after the journal commits and the response is acknowledged.
+ * @property {(options: RecoverableRequestOptions) => Promise<RecoverableResponseResult>} request - Send one Docker API request as a durable whole-write. The promise's outcome reflects the durable (journal) outcome: after a successful terminal commit the operation resolves with the parsed response, even if the receive acknowledgement afterwards fails (the terminal commit is authoritative and precludes replay); a commit failure or an unresolvable operation rejects.
  * @property {(options: RecoverableRecoveryOptions) => Promise<RecoverableResponseResult>} recoverOperation - Recover a prepared operation by stable identifier on a replacement transport set and re-attach a fresh response parser.
  * @property {(options: RecoverableRecoveryOptions) => Promise<RecoverableResponseResult>} recoverReattachment - Re-attach a fresh response parser to an already recovered virtual socket.
  */
@@ -135,7 +140,12 @@ export class RecoverableSocketductTransportError extends Error {
  * buffered fully, and sent as one `writeDurable` whole-write so recovery sees
  * zero or the complete request. Receive acknowledgements are withheld until
  * the complete bounded response is parsed and the journal has durably
- * committed the terminal result.
+ * committed the terminal result. The request promise's outcome reflects the
+ * durable (journal) outcome: after a successful `commitTerminal`, a failed
+ * receive acknowledgement is a bookkeeping race (for example the target
+ * closed the stream first) and is non-fatal — the operation still resolves
+ * with the parsed response because the terminal commit is authoritative and
+ * precludes replay of the operation.
  * @param {RecoverableSocketductTransportOptions} options - Transport configuration.
  * @returns {RecoverableSocketductTransport} Request, recovery, and re-attachment surface.
  */
@@ -205,6 +215,12 @@ export function createRecoverableSocketductTransport(options) {
         "RECOVERABLE_TRANSPORT_INVALID_IDENTIFIER"
       )
     }
+    if (identifier !== validated.context.identifier) {
+      throw new RecoverableSocketductTransportError(
+        "the recovery identifier must equal the operation context identifier",
+        "RECOVERABLE_TRANSPORT_INVALID_IDENTIFIER"
+      )
+    }
     /** @type {RecoverableVirtualSocket} */
     let socket
     try {
@@ -240,12 +256,10 @@ export function createRecoverableSocketductTransport(options) {
       throw new TypeError("Recoverable Socketduct transport re-attachment requires a recovered virtual socket")
     }
 
-    try {
-      verifySocketCapabilities(socket)
-    } catch (error) {
-      destroyQuietly(socket)
-      throw error
-    }
+    // A capability failure does NOT destroy the caller-provided socket: it
+    // may be the only durable recovery state (destroying it would schedule
+    // spool removal). Ownership and the socket's fate stay with the caller.
+    verifySocketCapabilities(socket)
 
     return driveRecoverableRequest({
       journal,
@@ -470,9 +484,14 @@ function driveRecoverableRequest({journal, socket, mode, maxResponseBytes, metho
       journal.commitTerminal(context, result).then(async () => {
         try {
           await socket.acknowledgeReceive(proxy.deliveredBytes)
-        } catch (error) {
-          closeStream(asError(error))
-          reject(asError(error))
+        } catch {
+          // A failed receive-ACK after a successful commit is a bookkeeping
+          // race (for example the target closed the stream before the ACK
+          // could be acknowledged). The terminal commit is authoritative and
+          // precludes replay, so the operation still resolves with the
+          // parsed result; teardown stays best-effort.
+          closeStream()
+          resolve({status, headers: responseHeaders, body: responseBody})
           return
         }
         closeStream()
@@ -598,7 +617,10 @@ function forcedRequestHeaders(headers) {
   const forced = {}
   for (const [key, value] of Object.entries(headers)) {
     const normalized = key.toLowerCase()
-    if (normalized === "connection" || normalized === "accept-encoding") continue
+    // `expect` is dropped: a 100-continue request would withhold the body
+    // until a 100 that never arrives, because nothing reaches the target
+    // until the whole request is admitted at finish.
+    if (normalized === "connection" || normalized === "accept-encoding" || normalized === "expect") continue
     forced[key] = value
   }
   forced["Connection"] = "close"

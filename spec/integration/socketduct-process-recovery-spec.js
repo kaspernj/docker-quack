@@ -1,4 +1,4 @@
-import {mkdtemp, rm} from "node:fs/promises"
+import {mkdtemp, open, readFile, rm} from "node:fs/promises"
 import http from "node:http"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
@@ -102,6 +102,59 @@ class InMemoryJournal {
     this.entries.set(context.identifier, entry)
     this.reasons.push(reason)
     this.events.push("markAmbiguous")
+  }
+}
+
+/**
+ * Minimal file-backed durable operation journal: each call appends one JSON
+ * line to a temp file and fsyncs it, so `commitTerminal` is real I/O (not a
+ * microtask) and the post-commit receive-ACK race is real.
+ */
+class FileJournal {
+  /** @param {string} file */
+  constructor(file) {
+    this.file = file
+  }
+
+  /**
+   * @param {object} entry
+   * @returns {Promise<void>}
+   */
+  async append(entry) {
+    const handle = await open(this.file, "a")
+    try {
+      await handle.appendFile(JSON.stringify(entry) + "\n")
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+  }
+
+  /**
+   * @param {object} context
+   * @returns {Promise<void>}
+   */
+  async prepare(context) {
+    await this.append({op: "prepare", identifier: context.identifier})
+  }
+
+  /**
+   * @param {object} context
+   * @param {unknown} result
+   * @returns {Promise<void>}
+   */
+  async commitTerminal(context, result) {
+    await this.append({op: "commitTerminal", identifier: context.identifier, result})
+  }
+
+  /**
+   * @param {object} context
+   * @param {unknown} reason
+   * @returns {Promise<void>}
+   */
+  async markAmbiguous(context, reason) {
+    const {code, message} = /** @type {{code: string, message: string}} */ (reason)
+    await this.append({op: "markAmbiguous", identifier: context.identifier, reason: {code, message}})
   }
 }
 
@@ -297,6 +350,47 @@ if (process.env.SOCKETDUCT_REPO) {
         const terminalResult = /** @type {{bodyBytes?: number, bodyDigest?: string}} */ (entry.result)
         expect(terminalResult.bodyBytes).toBeGreaterThan(0)
         expect(terminalResult.bodyDigest).toMatch(/^[0-9a-f]{64}$/)
+      } finally {
+        await stack.close()
+      }
+    })
+
+    it("completes a round trip with a file-backed fsync journal when the target closes the connection", async () => {
+      const loaded = await environment
+      const {server, stats, port} = await createFakeDockerTarget()
+      const stack = await createReverseRecoveryStack(server, port, loaded)
+
+      try {
+        // The target answers Connection: close (as the transport forces), so
+        // the relay closes the stream after the response; with a real
+        // append+fsync commit, the post-commit receive-ACK can lose that
+        // race. The request must still complete with the parsed result.
+        const journalFile = join(stack.root, "journal.jsonl")
+        const journal = new FileJournal(journalFile)
+        const recording = makeRecordingSet(stack.set)
+        const transport = createRecoverableSocketductTransport({
+          transportSet: recording,
+          journal,
+          target: {host: "127.0.0.1", port}
+        })
+
+        const result = await transport.request({
+          method: "GET",
+          path: "/version",
+          context: {identifier: "filejournal-op-001"}
+        })
+
+        expect(result.status).toEqual(200)
+        expect(JSON.parse(result.body.toString())).toEqual({Version: "27.1.0", ApiVersion: "1.46"})
+        expect(stats.connections).toEqual(1)
+        expect(stats.requests).toEqual([{method: "GET", url: "/version"}])
+
+        const lines = (await readFile(journalFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line))
+        expect(lines.map((line) => line.op)).toEqual(["prepare", "commitTerminal"])
+        const terminals = lines.filter((line) => line.op === "commitTerminal")
+        expect(terminals).toHaveLength(1)
+        expect(terminals[0].identifier).toEqual("filejournal-op-001")
+        expect(terminals[0].result).toMatchObject({status: 200, terminal: "completed"})
       } finally {
         await stack.close()
       }

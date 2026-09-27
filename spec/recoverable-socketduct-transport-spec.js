@@ -50,7 +50,7 @@ class FakeVirtualSocket extends Duplex {
   responseEmitted = false
 
   /**
-   * @param {{manualReceiveAck?: boolean, encrypted?: boolean, response?: Buffer, respondOn?: "writeDurable" | "now", failWith?: {message: string, code: string}, omitWriteDurable?: boolean}} [options]
+   * @param {{manualReceiveAck?: boolean, encrypted?: boolean, response?: Buffer, respondOn?: "writeDurable" | "now", failWith?: {message: string, code: string}, omitWriteDurable?: boolean, selfCloseAfterResponse?: boolean}} [options]
    */
   constructor(options = {}) {
     super({allowHalfOpen: true})
@@ -64,6 +64,8 @@ class FakeVirtualSocket extends Duplex {
     this.respondOn = options.respondOn ?? "writeDurable"
     /** @type {{message: string, code: string} | undefined} */
     this.failWith = options.failWith
+    /** @type {boolean} */
+    this.selfCloseAfterResponse = options.selfCloseAfterResponse ?? false
     if (options.omitWriteDurable === true) {
       // Simulates a Socketduct transport without durable whole-write support.
     } else {
@@ -128,6 +130,13 @@ class FakeVirtualSocket extends Duplex {
     this.push(this.response.subarray(0, first))
     this.push(this.response.subarray(first))
     this.push(null)
+    if (this.selfCloseAfterResponse) {
+      // Mimic the reverse client's CLOSE handling: after the response bytes
+      // are delivered the stream ends and the socket is destroyed shortly
+      // afterwards, racing any in-flight journal commit and receive
+      // acknowledgement.
+      setTimeout(() => this.destroy(), 10)
+    }
   }
 }
 
@@ -708,8 +717,9 @@ describe("createRecoverableSocketductTransport", () => {
     expect(socket.acks).toEqual([])
   })
 
-  it("surfaces an acknowledgement failure after the commit without masking it", async () => {
-    const socket = new FakeVirtualSocket({response: rawHttpResponse({body: VERSION_BODY})})
+  it("resolves an acknowledgement failure after the commit because the terminal commit is authoritative", async () => {
+    const response = rawHttpResponse({body: VERSION_BODY, headers: {"Content-Type": "application/json"}})
+    const socket = new FakeVirtualSocket({response})
     const invalidAck = typedError(new Error("Receive acknowledgement exceeds bytes delivered to the application"), "SOCKETDUCT_INVALID_RECEIVE_ACK")
     socket.acknowledgeReceive = () => Promise.reject(invalidAck)
     const journal = makeJournal()
@@ -720,21 +730,53 @@ describe("createRecoverableSocketductTransport", () => {
       target: {host: "127.0.0.1", port: 2375}
     })
 
-    let failure
-    try {
-      await transport.request({
-        method: "GET",
-        path: "/version",
-        context: {identifier: "spec-op-0015-ackf"}
-      })
-    } catch (error) {
-      failure = /** @type {Error} */ (/** @type {unknown} */ (error))
-    }
+    const result = await transport.request({
+      method: "GET",
+      path: "/version",
+      context: {identifier: "spec-op-0015-ackf"}
+    })
 
-    expect(failure).toBe(invalidAck)
+    expect(result.status).toEqual(200)
+    expect(result.headers["content-type"]).toEqual("application/json")
+    expect(result.body.toString()).toEqual(VERSION_BODY)
     expect(journal.calls.some((call) => call.op === "commitTerminal")).toBe(true)
     expect(journal.calls.some((call) => call.op === "markAmbiguous")).toBe(false)
     expect(socket.destroyed).toBe(true)
+  })
+
+  it("resolves with the parsed result when the socket destroys itself before a slow commit completes", async () => {
+    const response = rawHttpResponse({body: VERSION_BODY, headers: {"Content-Type": "application/json"}})
+    const socket = new FakeVirtualSocket({response, selfCloseAfterResponse: true})
+    const journal = makeJournal()
+    const originalCommit = journal.commitTerminal
+    // The journal's fsync I/O loses the race to the target's close
+    // processing: by the time the commit resolves, the virtual socket is
+    // already destroyed and acknowledgeReceive would reject.
+    journal.commitTerminal = (context, result) => new Promise((resolve, reject) => {
+      setTimeout(() => {
+        if (!socket.destroyed) reject(new Error("Socket was not destroyed before the slow commit resolved"))
+        else resolve(originalCommit(context, result))
+      }, 30)
+    })
+    const transportSet = makeTransportSet(socket)
+    const transport = createRecoverableSocketductTransport({
+      transportSet,
+      journal,
+      target: {host: "127.0.0.1", port: 2375}
+    })
+
+    const result = await transport.request({
+      method: "GET",
+      path: "/version",
+      context: {identifier: "spec-op-0021-selfclose"}
+    })
+
+    expect(result.status).toEqual(200)
+    expect(result.headers["content-type"]).toEqual("application/json")
+    expect(result.body.toString()).toEqual(VERSION_BODY)
+    expect(socket.destroyed).toBe(true)
+    expect(journal.calls.some((call) => call.op === "commitTerminal")).toBe(true)
+    expect(journal.calls.some((call) => call.op === "markAmbiguous")).toBe(false)
   })
 
   it("marks the operation ambiguous when the journal commit fails", async () => {
@@ -904,6 +946,92 @@ describe("createRecoverableSocketductTransport", () => {
 
     expect(failure?.code).toEqual("RECOVERABLE_TRANSPORT_INVALID_IDENTIFIER")
     expect(replacementSet.recovered).toEqual([])
+    expect(journal.calls).toEqual([])
+  })
+
+  it("rejects a recovery identifier that differs from the operation context identifier", async () => {
+    const journal = makeJournal()
+    const primary = new FakeVirtualSocket()
+    const transportSet = makeTransportSet(primary)
+    const replacementSet = makeTransportSet(primary)
+    const transport = createRecoverableSocketductTransport({
+      transportSet,
+      journal,
+      target: {host: "127.0.0.1", port: 2375}
+    })
+
+    let failure
+    try {
+      await transport.recoverOperation({
+        transportSet: replacementSet,
+        identifier: "spec-op-0022-mism-a",
+        method: "GET",
+        path: "/version",
+        context: {identifier: "spec-op-0022-mism-b"}
+      })
+    } catch (error) {
+      failure = /** @type {Error} */ (/** @type {unknown} */ (error))
+    }
+
+    expect(failure).toBeInstanceOf(RecoverableSocketductTransportError)
+    expect(failure?.code).toEqual("RECOVERABLE_TRANSPORT_INVALID_IDENTIFIER")
+    expect(failure?.message).toEqual("the recovery identifier must equal the operation context identifier")
+    expect(replacementSet.recovered).toEqual([])
+    expect(journal.calls).toEqual([])
+  })
+
+  it("drops a caller-supplied Expect header so the request completes normally", async () => {
+    const socket = new FakeVirtualSocket({response: rawHttpResponse({body: VERSION_BODY})})
+    const journal = makeJournal()
+    const transportSet = makeTransportSet(socket)
+    const transport = createRecoverableSocketductTransport({
+      transportSet,
+      journal,
+      target: {host: "127.0.0.1", port: 2375}
+    })
+
+    const result = await transport.request({
+      method: "POST",
+      path: "/containers/abc/start",
+      body: "{}",
+      headers: {Expect: "100-continue"},
+      context: {identifier: "spec-op-0023-expect"}
+    })
+
+    expect(result.status).toEqual(200)
+    expect(result.body.toString()).toEqual(VERSION_BODY)
+    expect(socket.durableWrites).toHaveLength(1)
+    const requestBytes = socket.durableWrites[0].toString()
+    expect(requestBytes).not.toContain("100-continue")
+    expect(requestBytes).not.toContain("Expect:")
+  })
+
+  it("leaves a caller-provided recovered socket untouched when its capabilities are missing", async () => {
+    const socket = new FakeVirtualSocket({omitWriteDurable: true, response: rawHttpResponse({body: VERSION_BODY})})
+    const journal = makeJournal()
+    const transportSet = makeTransportSet(socket)
+    const transport = createRecoverableSocketductTransport({
+      transportSet,
+      journal,
+      target: {host: "127.0.0.1", port: 2375}
+    })
+
+    let failure
+    try {
+      await transport.recoverReattachment({
+        socket,
+        method: "GET",
+        path: "/version",
+        context: {identifier: "spec-op-0024-noown"}
+      })
+    } catch (error) {
+      failure = /** @type {Error} */ (/** @type {unknown} */ (error))
+    }
+
+    expect(failure?.code).toEqual("RECOVERABLE_TRANSPORT_DURABLE_WRITE_REQUIRED")
+    // The caller owns the recovered socket: destroying it here would schedule
+    // spool removal and delete the only durable recovery state.
+    expect(socket.destroyed).toBe(false)
     expect(journal.calls).toEqual([])
   })
 
