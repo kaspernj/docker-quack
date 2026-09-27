@@ -1,3 +1,6 @@
+dependency_roots:
+  - path: .
+
 cancel_superseded_builds: false
 services:
   docker_server:
@@ -28,7 +31,6 @@ before_install:
   - sudo apt-get install -y curl nodejs
 script:
   - node -v
-  - npm install
   - npm run lint
   - npm run typecheck
   - npm run test
